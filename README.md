@@ -41,7 +41,7 @@
 <div align="center">
 
 ### 🎉花折 - KubeDoor 1.3发布！多K8S支持的MCP来啦！全新架构，多K8S管控支持，多K8S统一监控、告警、展示最佳实践🎉
-![KubeDoor1 0 0 drawio](screenshot/1.0/kubedoor1.0-arch.png)
+![KubeDoor1.3.3](screenshot/KubeDoor1.3.3.png)
 </div>
 
 ## 💎功能描述
