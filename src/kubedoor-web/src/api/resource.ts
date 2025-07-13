@@ -151,26 +151,32 @@ export const execCapacity = (
   env: string,
   addLabel: boolean,
   data: any[],
-  interval?: number
+  interval?: number,
+  temp?: boolean
 ) => {
-  return http.request<ResultTable>(
-    "post",
-    `/api/scale?env=${env}${addLabel ? "&add_label=true" : ""}`,
-    {
-      params: interval ? { interval } : undefined,
-      data
-    }
-  );
+  let url = `/api/scale?env=${env}${addLabel ? "&add_label=true" : ""}`;
+  if (temp) {
+    url += "&temp=true";
+  }
+  return http.request<ResultTable>("post", url, {
+    params: interval ? { interval } : undefined,
+    data
+  });
 };
 
-export const execTimeCron = (env: string, addLabel: boolean, data: any) => {
-  return http.request<ResultTable>(
-    "post",
-    `/api/cron?env=${env}${addLabel ? "&add_label=true" : ""}`,
-    {
-      data
-    }
-  );
+export const execTimeCron = (
+  env: string,
+  addLabel: boolean,
+  data: any,
+  temp?: boolean
+) => {
+  let url = `/api/cron?env=${env}${addLabel ? "&add_label=true" : ""}`;
+  if (temp) {
+    url += "&temp=true";
+  }
+  return http.request<ResultTable>("post", url, {
+    data
+  });
 };
 
 export const rebootResource = (env: string, data: any[], interval?: number) => {

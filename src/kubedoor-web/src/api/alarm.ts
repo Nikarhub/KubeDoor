@@ -198,11 +198,12 @@ interface PodParams {
   env: string;
   ns: string;
   pod_name: string;
+  scale_pod?: boolean;
 }
 
 // Pod隔离接口
 export const modifyPod = (params: PodParams) => {
-  return http.request<ResultData>("get", "/api/pod/modify_pod", { params });
+  return http.request<ResultData>("post", "/api/pod/modify_pod", { params });
 };
 
 // Pod删除接口

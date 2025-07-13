@@ -108,7 +108,9 @@ async def websocket_handler(request):
                     deployment = data["deployment"]
                     logger.info(f"==========客户端 env={env} {request_id} {namespace} {deployment}")
                     deploy_res = utils.get_deploy_admis(env, namespace, deployment)
-                    await ws.send_json({"type": "admis", "request_id": request_id, "deploy_res": deploy_res})
+                    await ws.send_json(
+                        {"type": "admis", "request_id": request_id, "deploy_res": deploy_res}
+                    )
 
                 elif data.get("type") == "response":
                     # 收到客户端的响应，存储到客户端的响应队列中
@@ -149,19 +151,35 @@ async def http_handler(request):
 
     # 扩缩容接口要查询节点cpu使用率并传给agent
     logger.info(path)
-    if path == "/api/scale" and query_params.get("add_label") == 'true':
+    if query_params.get("add_label") == 'true':
         node_cpu_list = await utils.get_node_cpu_per(query_params.get("env"))
-        body[0]['node_cpu_list'] = node_cpu_list
+        if path == "/api/scale":
+            body[0]['node_cpu_list'] = node_cpu_list
+        elif path == "/api/pod/modify_pod":
+            body = node_cpu_list
 
     # 固定节点均衡模式，增加节点微调能力
     if path == "/api/balance_node":
         source = body.get('source')
+        target = body.get('target')
         num = body.get('num')
         type = body.get('type')
         logger.info(body)
 
         # 查询源节点所有deployment列表
-        deployment_list = utils.get_node_deployments(source, env)
+        source_deployment_list = utils.get_node_deployments(source, env)
+        target_deployment_list = utils.get_node_deployments(target, env)
+        deployment_list = []
+        for i in source_deployment_list:
+            flag = True
+            for j in target_deployment_list:
+                if i.get('namespace') == j.get('namespace') and i.get('pod') == j.get('pod'):
+                    flag = False
+                    break
+            if flag:
+                deployment_list.append(i)
+        logger.info(f'deployment_list去重前：{source_deployment_list}')
+        logger.info(f'deployment_list去重后：{deployment_list}')
         top_deployments = utils.get_deployment_from_control_data(deployment_list, num, type, env)
         body['top_deployments'] = top_deployments
 
@@ -199,7 +217,9 @@ async def status_handler(request):
     agents_status = {
         env: {
             "online": data["online"],
-            "last_heartbeat": datetime.fromtimestamp(data["last_heartbeat"]).strftime("%Y-%m-%d %H:%M:%S"),
+            "last_heartbeat": datetime.fromtimestamp(data["last_heartbeat"]).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
             "ver": data["ver"],
         }
         for env, data in clients.items()
@@ -279,7 +299,9 @@ async def init_peak_data(request):
         peak_hours = request.query.get("peak_hours", "10:00:00-11:30:00")
         logger.info(f"🐛开始获取{env_value}，{days}天，每日【{peak_hours}】高峰期数据")
         namespace_str = ".*"  # utils.NAMESPACE_LIST.replace(",", "|")
-        duration_str, start_time_part, end_time_part = utils.calculate_peak_duration_and_end_time(peak_hours)
+        duration_str, start_time_part, end_time_part = utils.calculate_peak_duration_and_end_time(
+            peak_hours
+        )
 
         for i in range(0, days):
             # 计算结束时间字符串
@@ -291,9 +313,13 @@ async def init_peak_data(request):
                 continue
             utils.check_and_delete_day_data(end_time_full, env_value)
             logger.info(f"🚀获取{end_time_full}的数据======")
-            k8s_metrics_list = utils.merged_dict(env_key, env_value, namespace_str, duration_str, start_time_full, end_time_full)
+            k8s_metrics_list = utils.merged_dict(
+                env_key, env_value, namespace_str, duration_str, start_time_full, end_time_full
+            )
             utils.metrics_to_ck(k8s_metrics_list)
-        logger.info(f"🚀{env_value}: 高峰期数据采集流程结束,开始取最近10天cpu使用最高的一天pod数据, 写入管控表")
+        logger.info(
+            f"🚀{env_value}: 高峰期数据采集流程结束,开始取最近10天cpu使用最高的一天pod数据, 写入管控表"
+        )
 
         # 采集完成后，取最近10天cpu数据最高的一天pod，数据写入管控表
         resources = utils.get_list_from_resources(env_value)
@@ -301,13 +327,18 @@ async def init_peak_data(request):
             # 初始化
             logger.info(f"🌊{env_value}: 初始化管控表======")
             flag = utils.init_control_data(resources)
+            logger.info(f"✨{env_value}: 更新完成")
         else:
             # 更新
             logger.info(f"🌊{env_value}: 更新管控表======")
             flag = utils.update_control_data(resources)
+            logger.info(f"✨{env_value}: 更新完成")
 
         if not flag:
-            return web.json_response({"message": f"{env_value}: 写入管控表执行失败，详情见kubedoor-master日志"}, status=500)
+            return web.json_response(
+                {"message": f"{env_value}: 写入管控表执行失败，详情见kubedoor-master日志"},
+                status=500,
+            )
         return web.json_response({"message": f"{env_value}: 执行完成"})
     except Exception as e:
         logger.error(f"Error in table: {e}")

@@ -129,6 +129,12 @@ rules:
     resources:
       - nodes
       - pods
+  - verbs:
+      - get
+    apiGroups:
+      - apps
+    resources:
+      - replicasets
 ---
 
 apiVersion: rbac.authorization.k8s.io/v1

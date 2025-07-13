@@ -558,7 +558,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, onMounted } from "vue";
+import { ref, reactive, computed, onMounted, h } from "vue";
 import { ElMessage, ElMessageBox } from "element-plus";
 
 import {
@@ -575,7 +575,8 @@ import {
   getPromEnv,
   getPromNamespace,
   getPromQueryData,
-  getPodData
+  getPodData,
+  showAddLabel
 } from "@/api/monit";
 import { useResource } from "./utils/hook";
 import { useSearchStoreHook } from "@/store/modules/search";
@@ -835,16 +836,101 @@ const showResultDialog = (message: string, operation: string = "") => {
 // Pod操作相关函数
 const handleModifyPod = async (env: string, namespace: string, pod: string) => {
   try {
-    await ElMessageBox.confirm("确认要隔离该Pod吗？", "提示", {
+    const scalePodRef = ref(false);
+    const addLabelRef = ref(false);
+    const shouldShowAddLabel = ref(false);
+
+    // 检查是否需要显示已开启固定节点均衡模式选项
+    try {
+      const labelResult = await showAddLabel(env, namespace);
+      shouldShowAddLabel.value =
+        labelResult.data && labelResult.data.length > 0;
+      if (shouldShowAddLabel.value) {
+        addLabelRef.value = true; // 如果需要显示，默认勾选
+      }
+    } catch (error) {
+      console.error("检查固定节点均衡模式失败:", error);
+      shouldShowAddLabel.value = false;
+    }
+
+    // 创建固定节点均衡模式选项的容器
+    const addLabelContainer = h(
+      "div",
+      {
+        id: "addLabelContainer",
+        style: "display: none; margin-left: 24px;"
+      },
+      [
+        h("input", {
+          type: "checkbox",
+          id: "addLabelCheckbox",
+          checked: true,
+          style: "margin-right: 8px;",
+          onChange: (e: Event) => {
+            addLabelRef.value = (e.target as HTMLInputElement).checked;
+          }
+        }),
+        h(
+          "label",
+          { for: "addLabelCheckbox", style: "color: #f56c6c;" },
+          "已开启固定节点均衡模式"
+        )
+      ]
+    );
+
+    const messageElements = [
+      h("p", { style: "margin-bottom: 16px;" }, "确认要隔离该Pod吗？"),
+      h(
+        "div",
+        { style: "display: flex; align-items: center; margin-bottom: 12px;" },
+        [
+          h("input", {
+            type: "checkbox",
+            id: "scalePodCheckbox",
+            style: "margin-right: 8px;",
+            onChange: (e: Event) => {
+              scalePodRef.value = (e.target as HTMLInputElement).checked;
+              // 动态显示/隐藏固定节点均衡模式选项
+              const container = document.getElementById("addLabelContainer");
+              if (container) {
+                container.style.display =
+                  scalePodRef.value && shouldShowAddLabel.value
+                    ? "flex"
+                    : "none";
+                container.style.alignItems = "center";
+              }
+            }
+          }),
+          h("label", { for: "scalePodCheckbox" }, "临时扩容1个Pod")
+        ]
+      ),
+      addLabelContainer
+    ];
+
+    await ElMessageBox({
+      title: "提示",
+      message: h("div", messageElements),
       confirmButtonText: "确定",
       cancelButtonText: "取消",
-      type: "warning"
+      type: "warning",
+      showCancelButton: true
     });
-    const res = await modifyPod({
+
+    const params: any = {
       env: env,
       ns: namespace,
       pod_name: pod
-    });
+    };
+
+    if (scalePodRef.value) {
+      params.scale_pod = true;
+      // 如果勾选了临时扩容且需要显示固定节点均衡模式，则传递add_label参数
+      if (shouldShowAddLabel.value && addLabelRef.value) {
+        params.add_label = true;
+      }
+    }
+
+    const res = await modifyPod(params);
     if (res.success) {
       ElMessage.success("操作成功");
       showResultDialog(res.message, "modify");

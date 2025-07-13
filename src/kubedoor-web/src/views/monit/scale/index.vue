@@ -27,7 +27,8 @@ const form = ref({
   type: 1,
   time: "",
   cron: "",
-  add_label: props.showAddLabel ? true : false
+  add_label: props.showAddLabel ? true : false,
+  temp: false
 });
 
 const podCount = ref(props.params?.podCount || 0);
@@ -77,7 +78,11 @@ function getData() {
           ];
           tempData.time = dateArray;
         }
-        resolve({ podCount: podCount.value, tempData: tempData });
+        resolve({
+          podCount: podCount.value,
+          tempData: tempData,
+          temp: form.value.temp
+        });
       }
     });
   });
@@ -137,6 +142,8 @@ defineExpose({ getData });
               prop="add_label"
             >
               <el-checkbox v-model="form.add_label" />
+              <span style="margin-left: 20px">临时扩容</span>
+              <el-checkbox v-model="form.temp" style="margin-left: 8px" />
             </el-form-item>
           </re-col>
         </template>

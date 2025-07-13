@@ -61,13 +61,15 @@ export function useResource() {
         contentRenderer: () => h(scale, { ref: ScaleRef }),
         beforeSure: async done => {
           const scaleData = await ScaleRef.value.getData();
-          // 更新扩缩容量pod数
-          await updatePodCount({
-            env: row.env,
-            namespace: row.namespace,
-            deployment_name: row.deployment,
-            pod_count_manual: scaleData.podCount
-          });
+          // 更新扩缩容量pod数 - 如果勾选了temp则跳过SQL更新
+          if (!scaleData.temp) {
+            await updatePodCount({
+              env: row.env,
+              namespace: row.namespace,
+              deployment_name: row.deployment,
+              pod_count_manual: scaleData.podCount
+            });
+          }
           let res;
           params.map(item => {
             item.num = scaleData.podCount;
@@ -79,7 +81,8 @@ export function useResource() {
                 currentEnv,
                 scaleData.tempData.add_label,
                 params,
-                params.length > 1 ? scaleData.tempData.interval : undefined
+                params.length > 1 ? scaleData.tempData.interval : undefined,
+                scaleData.temp
               );
             } else {
               let tempData = {
@@ -98,7 +101,8 @@ export function useResource() {
               res = await execTimeCron(
                 currentEnv,
                 scaleData.tempData.add_label,
-                tempData
+                tempData,
+                scaleData.temp
               );
             }
 

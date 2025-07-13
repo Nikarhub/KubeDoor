@@ -1,23 +1,23 @@
 #!/usr/bin/python3
-import json, requests, os, utils
+import json, requests, utils
 from flask import Flask, Response, request, jsonify
 from clickhouse_pool import ChPool
 from datetime import datetime, UTC
 import pytz
 import logging
 import hashlib
-import os
 
-
-logging.basicConfig(level=getattr(logging, utils.LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=getattr(logging, utils.LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s'
+)
 pool = ChPool(
     host=utils.CK_HOST,
     port=utils.CK_PORT,
     user=utils.CK_USER,
     password=utils.CK_PASSWORD,
     database=utils.CK_DATABASE,
-    connections_min=5,
-    connections_max=100,
+    connections_min=1,
+    connections_max=10,
 )
 
 MSG_TOKEN = utils.MSG_TOKEN
@@ -39,7 +39,11 @@ def wecom(webhook, content, at):
 def dingding(webhook, content, at):
     webhook = 'https://oapi.dingtalk.com/robot/send?access_token=' + webhook
     headers = {'Content-Type': 'application/json'}
-    params = {"msgtype": "markdown", "markdown": {"title": "告警", "text": content}, "at": {"atMobiles": [at]}}
+    params = {
+        "msgtype": "markdown",
+        "markdown": {"title": "告警", "text": content},
+        "at": {"atMobiles": [at]},
+    }
     data = bytes(json.dumps(params), 'utf-8')
     response = requests.post(webhook, headers=headers, data=data)
     print(f'【dingding】{response.json()}', flush=True)
@@ -74,6 +78,53 @@ def parse_alert_time(time_str):
     return utc_time.astimezone(pytz.timezone('Asia/Shanghai'))
 
 
+def extract_container_from_pod(pod_name):
+    """从pod名称中提取container名称"""
+    try:
+        import re
+
+        # Kubernetes pod命名规则:
+        # 1. Deployment: <deployment-name>-<replicaset-hash>-<pod-hash>
+        # 2. ReplicaSet: <replicaset-name>-<pod-hash>
+        # hash通常是5-10位的随机字符串（字母数字组合）
+
+        # 使用正则表达式匹配末尾的hash模式
+        # 匹配最后一个或两个hash（5-10位字母数字）
+        pattern = r'^(.+?)-[a-z0-9]{5,10}(-[a-z0-9]{5,10})?$'
+        match = re.match(pattern, pod_name)
+
+        if match:
+            return match.group(1)
+
+        # 如果正则匹配失败，使用备用方案
+        # 去掉最后1-2个看起来像hash的部分
+        parts = pod_name.split('-')
+        if len(parts) >= 2:
+            # 检查最后一部分是否像hash（5-10位字母数字）
+            if len(parts[-1]) >= 5 and len(parts[-1]) <= 10 and parts[-1].isalnum():
+                # 检查倒数第二部分是否也像hash
+                if (
+                    len(parts) >= 3
+                    and len(parts[-2]) >= 5
+                    and len(parts[-2]) <= 10
+                    and parts[-2].isalnum()
+                ):
+                    return '-'.join(parts[:-2])
+                else:
+                    return '-'.join(parts[:-1])
+
+        # 如果所有解析方法都失败，强制去掉最后两部分
+        parts = pod_name.split('-')
+        if len(parts) >= 3:
+            return '-'.join(parts[:-2])
+        elif len(parts) >= 2:
+            return '-'.join(parts[:-1])
+        else:
+            return ''
+    except:
+        return ''
+
+
 def process_single_alert(alert):
     try:
         # 解析时间
@@ -88,8 +139,16 @@ def process_single_alert(alert):
         labels = alert.get('labels', {})
         annotations = alert.get('annotations', {})
         description = annotations.get('description', '').split('\n- ')[-1]
+
+        # 提取K8s相关字段，支持备用字段
+        namespace = labels.get('namespace', '') or labels.get('k8s_ns', '')
+        pod = labels.get('pod', '') or labels.get('k8s_pod', '')
+        container = labels.get('container', '') or labels.get('k8s_app', '')
+        env = labels.get(PROM_K8S_TAG_KEY, '')
+        alert_name = labels.get('alertname', '')
+
         # 生成指纹
-        fingerprint_str = labels[PROM_K8S_TAG_KEY] + labels['namespace'] + labels['pod'] + labels['alertname']
+        fingerprint_str = env + namespace + pod + alert_name
         fingerprint = hashlib.md5(fingerprint_str.encode(encoding='UTF-8')).hexdigest()
         promfinger = alert['fingerprint']
 
@@ -100,11 +159,11 @@ def process_single_alert(alert):
             'end_time': end_time_str,
             'severity': labels.get('severity', ''),
             'alert_group': labels.get('alertgroup', ''),
-            'alert_name': labels.get('alertname', ''),
-            'env': labels.get(PROM_K8S_TAG_KEY, ''),
-            'namespace': labels.get('namespace', ''),
-            'container': labels.get('container', ''),
-            'pod': labels.get('pod', ''),
+            'alert_name': alert_name,
+            'env': env,
+            'namespace': namespace,
+            'container': container,
+            'pod': pod,
             'description': description,
         }
         send_resolved = False if labels.get('send_resolved', True) == 'false' else True
@@ -164,12 +223,14 @@ def handle_firing_alert(alert_data, send_resolved):
         with pool.get_client() as client:
             client.execute(insert_query)
         logging.info(f"新建告警记录: {alert_data['fingerprint']}: {alert_data['alert_name']}")
+    return True, ''
 
 
 def handle_resolved_alert(alert_data, send_resolved):
     if not send_resolved:
-        logging.warning(f"告警 {alert_data['fingerprint']}: {alert_data['alert_name']} 的 send_resolved 为 false，不入库")
-        return
+        err = f"告警 {alert_data['fingerprint']}: {alert_data['alert_name']} 的 send_resolved 为 false，不入库"
+        logging.warning(err)
+        return False, err
 
     check_query = f"""
         SELECT 1 FROM kubedoor.k8s_pod_alert_days
@@ -191,8 +252,11 @@ def handle_resolved_alert(alert_data, send_resolved):
             client.execute(update_query)
 
         logging.info(f"标记告警解决: {alert_data['fingerprint']}: {alert_data['alert_name']}")
+        return True, ''
     else:
-        logging.error(f"未找到对应告警记录: {alert_data['fingerprint']}: {alert_data['alert_name']}")
+        err = f"未找到对应告警记录: {alert_data['fingerprint']}: {alert_data['alert_name']}"
+        logging.error(err)
+        return False, err
 
 
 app = Flask(__name__)
@@ -213,6 +277,104 @@ def handle_alert():
 
     except Exception as e:
         logging.error(f"处理请求时发生异常: {str(e)}")
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/custom_alert', methods=['POST'])
+def handle_custom_alert():
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'status': 'error', 'message': '无效的请求格式'}), 400
+
+        # 验证必需字段
+        required_fields = [
+            'start_time',
+            'end_time',
+            'severity',
+            'alert_group',
+            'alert_name',
+            'env',
+            'namespace',
+            'pod',
+            'description',
+            'send_resolved',
+            'alert_status',
+        ]
+
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'status': 'error', 'message': f'缺少必需字段: {field}'}), 400
+
+        # 验证severity值
+        valid_severities = ['Critical', 'Info', 'Notice', 'Warning']
+        if data['severity'] not in valid_severities:
+            return (
+                jsonify(
+                    {'status': 'error', 'message': f'severity必须是以下值之一: {valid_severities}'}
+                ),
+                400,
+            )
+
+        # 验证alert_status值
+        valid_statuses = ['firing', 'resolved']
+        if data['alert_status'] not in valid_statuses:
+            return (
+                jsonify(
+                    {
+                        'status': 'error',
+                        'message': f'alert_status必须是以下值之一: {valid_statuses}',
+                    }
+                ),
+                400,
+            )
+
+        # 验证时间格式
+        try:
+            datetime.strptime(data['start_time'], "%Y-%m-%d %H:%M:%S")
+            datetime.strptime(data['end_time'], "%Y-%m-%d %H:%M:%S")
+        except ValueError:
+            return jsonify({'status': 'error', 'message': '时间格式必须为: %Y-%m-%d %H:%M:%S'}), 400
+
+        # 处理container字段：如果用户传了就用用户传的，如果没传就从pod名称中截取
+        if 'container' in data and data['container']:
+            container = data['container']
+        else:
+            container = extract_container_from_pod(data['pod'])
+
+        # 生成指纹
+        fingerprint_str = data['env'] + data['namespace'] + data['pod'] + data['alert_name']
+        fingerprint = hashlib.md5(fingerprint_str.encode(encoding='UTF-8')).hexdigest()
+
+        # 构造alert_data
+        alert_data = {
+            'fingerprint': fingerprint,
+            'start_time': data['start_time'],
+            'end_time': data['end_time'],
+            'severity': data['severity'],
+            'alert_group': data['alert_group'],
+            'alert_name': data['alert_name'],
+            'env': data['env'],
+            'namespace': data['namespace'],
+            'container': container,
+            'pod': data['pod'],
+            'description': data['description'],
+        }
+
+        send_resolved = data['send_resolved']
+        alert_status = data['alert_status']
+
+        # 根据alert_status调用相应的处理函数
+        if alert_status == 'firing':
+            result, msg = handle_firing_alert(alert_data, send_resolved)
+        else:
+            result, msg = handle_resolved_alert(alert_data, send_resolved)
+        if result:
+            return jsonify({'status': 'success', 'message': '自定义告警处理完成'}), 200
+        else:
+            return jsonify({'status': 'error', 'message': msg}), 400
+    except Exception as e:
+        logging.error(f"处理自定义告警时发生异常: {str(e)}")
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
