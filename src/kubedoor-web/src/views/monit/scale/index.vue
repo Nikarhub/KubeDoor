@@ -142,8 +142,11 @@ defineExpose({ getData });
               prop="add_label"
             >
               <el-checkbox v-model="form.add_label" />
-              <span style="margin-left: 20px">临时扩容</span>
-              <el-checkbox v-model="form.temp" style="margin-left: 8px" />
+            </el-form-item>
+          </re-col>
+          <re-col :offset="2" :value="20" :xs="24" :sm="24">
+            <el-form-item :label="'临时扩容'" label-width="70px" prop="temp">
+              <el-checkbox v-model="form.temp" />
             </el-form-item>
           </re-col>
         </template>
