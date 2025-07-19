@@ -87,3 +87,56 @@ def feishu(webhook, content, at=""):
     data = json.dumps(params)
     response = requests.post(webhook, headers=headers, data=data)
     return response.json()
+
+
+def parse_cpu(value: str) -> float:
+    """Convert Kubernetes CPU units to mCPU (millicores)."""
+    if not isinstance(value, str):
+        try:
+            return float(value) * 1000
+        except (ValueError, TypeError):
+            return 0
+
+    if value.endswith("m"):
+        try:
+            return int(value[:-1])
+        except ValueError:
+            return 0
+    if value.endswith("n"):
+        try:
+            return int(value[:-1]) / 1_000_000
+        except ValueError:
+            return 0
+    try:
+        return float(value) * 1000
+    except ValueError:
+        return 0
+
+
+def parse_memory(value: str) -> float:
+    """Convert Kubernetes memory units to MB."""
+    if not isinstance(value, str):
+        try:
+            return int(value) / (1024 * 1024)
+        except (ValueError, TypeError):
+            return 0
+
+    if value.endswith("Ki"):
+        try:
+            return int(value[:-2]) / 1024
+        except ValueError:
+            return 0
+    if value.endswith("Mi"):
+        try:
+            return int(value[:-2])
+        except ValueError:
+            return 0
+    if value.endswith("Gi"):
+        try:
+            return int(value[:-2]) * 1024
+        except ValueError:
+            return 0
+    try:
+        return int(value) / (1024 * 1024)
+    except ValueError:
+        return 0

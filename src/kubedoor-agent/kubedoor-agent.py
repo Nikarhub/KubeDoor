@@ -663,29 +663,8 @@ async def get_pod_metrics(namespace, pod_name):
             cpu = container.get("usage", {}).get("cpu", "0")
             memory = container.get("usage", {}).get("memory", "0")
 
-            # 转换CPU值（从字符串如 "100m" 转为数值 100）
-            if cpu.endswith("m"):
-                cpu = int(cpu[:-1])
-            elif cpu.endswith("n"):
-                cpu = int(cpu[:-1]) / 1000000
-            else:
-                try:
-                    cpu = int(cpu) * 1000  # 转换为mCPU
-                except ValueError:
-                    cpu = 0
-
-            # 转换内存值（从字符串如 "100Mi" 转为数值 MB）
-            if memory.endswith("Ki"):
-                memory = int(memory[:-2]) / 1024
-            elif memory.endswith("Mi"):
-                memory = int(memory[:-2])
-            elif memory.endswith("Gi"):
-                memory = int(memory[:-2]) * 1024
-            else:
-                try:
-                    memory = int(memory) / (1024 * 1024)  # 假设是字节，转换为MB
-                except ValueError:
-                    memory = 0
+            cpu = utils.parse_cpu(cpu)
+            memory = utils.parse_memory(memory)
 
             cpu_usage += cpu
             memory_usage += memory
@@ -918,29 +897,14 @@ async def get_node_metrics(node_name):
 
             # 转换CPU值（从字符串如 "100m" 转为数值 100）
             if isinstance(cpu, str):
-                if cpu.endswith("m"):
-                    cpu_usage = int(cpu[:-1])
-                elif cpu.endswith("n"):
-                    cpu_usage = int(cpu[:-1]) / 1000000
-                else:
-                    try:
-                        cpu_usage = int(cpu) * 1000  # 转换为mCPU
-                    except ValueError:
-                        cpu_usage = 0
+                cpu_usage = utils.parse_cpu(cpu)
+            else:
+                cpu_usage = utils.parse_cpu(str(cpu))
 
-            # 转换内存值（从字符串如 "100Mi" 转为数值 MB）
             if isinstance(memory, str):
-                if memory.endswith("Ki"):
-                    memory_usage = int(memory[:-2]) / 1024
-                elif memory.endswith("Mi"):
-                    memory_usage = int(memory[:-2])
-                elif memory.endswith("Gi"):
-                    memory_usage = int(memory[:-2]) * 1024
-                else:
-                    try:
-                        memory_usage = int(memory) / (1024 * 1024)  # 假设是字节，转换为MB
-                    except ValueError:
-                        memory_usage = 0
+                memory_usage = utils.parse_memory(memory)
+            else:
+                memory_usage = utils.parse_memory(str(memory))
 
         return {
             "cpu": round(cpu_usage, 2),
@@ -994,27 +958,11 @@ async def get_nodes_info(request):
             if node.status.allocatable:
                 # CPU单位通常是核心数，如"4"表示4核心
                 allocatable_cpu_str = node.status.allocatable.get("cpu", "0")
-                try:
-                    if allocatable_cpu_str.endswith("m"):
-                        allocatable_cpu = int(allocatable_cpu_str[:-1])
-                    else:
-                        allocatable_cpu = float(allocatable_cpu_str) * 1000
-                except (ValueError, AttributeError):
-                    allocatable_cpu = 0
+                allocatable_cpu = utils.parse_cpu(allocatable_cpu_str)
 
                 # 内存单位通常是字节，需要转换为MB
                 allocatable_memory_str = node.status.allocatable.get("memory", "0")
-                try:
-                    if allocatable_memory_str.endswith("Ki"):
-                        allocatable_memory = int(allocatable_memory_str[:-2]) / 1024
-                    elif allocatable_memory_str.endswith("Mi"):
-                        allocatable_memory = int(allocatable_memory_str[:-2])
-                    elif allocatable_memory_str.endswith("Gi"):
-                        allocatable_memory = int(allocatable_memory_str[:-2]) * 1024
-                    else:
-                        allocatable_memory = int(allocatable_memory_str) / (1024 * 1024)
-                except (ValueError, AttributeError):
-                    allocatable_memory = 0
+                allocatable_memory = utils.parse_memory(allocatable_memory_str)
 
                 # 最大可运行Pod数
                 max_pods_str = node.status.allocatable.get("pods", "0")
