@@ -45,17 +45,24 @@
 </div>
 
 ## 💎功能描述
-### 💥花折 KubeDoor MCP
-**💠KubeDoor MCP 体验版来啦！接入任意MCP客户端，即可与LLM对话方式：对您的所有K8S集群操作、资源异常故障分析。**
+### 0. 💥 新版本功能关注
+##### **💠KubeDoor MCP 体验版来啦！接入任意MCP客户端，即可与LLM对话方式：对您的所有K8S集群操作、资源异常故障分析。**
 - 使用任意MCP客户端, 新增MCP服务器, 选择sse类型,地址输入：`http://{nodeIP}:{kubedoor-mcp-NodePort}/sse`即可接入KubeDoor MCP.
 - 基于KubeDoor的多K8S管理监控架构与已有的API接口，可以快速生成大量MCP工具来操作K8S与Grafana数据分析，敬请期待！
-- 已接入的工具列表
-![图片](https://github.com/user-attachments/assets/19f50de7-248d-429d-9c19-c3a6a2282716)
-- 演示
-![kubedoor-mcp](https://github.com/user-attachments/assets/26e03c8e-4038-4094-affe-1d4de85d4675)
->由于大语言模型的不确定性，请尽量使用带工具确认的的MCP客户端（cline、Cursor）。
->
->目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
+- **已接入的工具列表与操作演示**
+
+  | <img src="https://github.com/user-attachments/assets/19f50de7-248d-429d-9c19-c3a6a2282716"/> | <img src="https://github.com/user-attachments/assets/26e03c8e-4038-4094-affe-1d4de85d4675"/> |
+  | ------------------------------------| ----------------------------------- |
+  
+  >由于大语言模型的不确定性，请尽量使用带工具确认的的MCP客户端（cline、Cursor）。
+  >
+  >目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
+
+##### **💠KubeDoor WEB 新增Pod实时日志跟踪，自动多色标记各级别异常，支持关键字查询定位与过滤。支持日志自带颜色显示**
+
+|<img width="2418" height="1278" alt="图片" src="https://github.com/user-attachments/assets/e563c36a-2c1c-4cee-9b35-21a20976856b" />|
+| ------------------------------------|
+
 ### 1. 📡资源监控分析：多K8S集群统一监控最佳实践
 <div align="center">
 <img src="./screenshot/1.0/vm-arch.png" width="650;" />
