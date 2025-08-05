@@ -81,3 +81,38 @@ export const showAddLabel = (env: string, namespace: string) => {
     }
   });
 };
+
+/**
+ * 获取Pod重启前日志
+ * @param env K8S环境
+ * @param namespace 命名空间
+ * @param podName Pod名称
+ * @param lines 日志行数（可选，默认100）
+ */
+export const getPodPreviousLogs = (
+  env: string,
+  namespace: string,
+  podName: string,
+  lines: number = 100
+) => {
+  return http.request<any>("get", "/api/pod/get_previous_logs", {
+    params: { env, ns: namespace, pod: podName, lines }
+  });
+};
+
+/**
+ * 创建Pod日志流WebSocket连接URL
+ * @param env K8S环境
+ * @param namespace 命名空间
+ * @param podName Pod名称
+ * @returns WebSocket连接URL
+ */
+export const createPodLogStreamUrl = (
+  env: string,
+  namespace: string,
+  podName: string
+) => {
+  const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  const host = window.location.host;
+  return `${protocol}//${host}/ws/pod-logs?env=${env}&namespace=${namespace}&pod_name=${podName}`;
+};

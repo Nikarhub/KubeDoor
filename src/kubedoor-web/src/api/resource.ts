@@ -152,11 +152,15 @@ export const execCapacity = (
   addLabel: boolean,
   data: any[],
   interval?: number,
-  temp?: boolean
+  temp?: boolean,
+  strategy?: string
 ) => {
   let url = `/api/scale?env=${env}${addLabel ? "&add_label=true" : ""}`;
   if (temp) {
     url += "&temp=true";
+  }
+  if (strategy && addLabel) {
+    url += `&type=${strategy}`;
   }
   return http.request<ResultTable>("post", url, {
     params: interval ? { interval } : undefined,
@@ -168,11 +172,15 @@ export const execTimeCron = (
   env: string,
   addLabel: boolean,
   data: any,
-  temp?: boolean
+  temp?: boolean,
+  strategy?: string
 ) => {
   let url = `/api/cron?env=${env}${addLabel ? "&add_label=true" : ""}`;
   if (temp) {
     url += "&temp=true";
+  }
+  if (strategy && addLabel) {
+    url += `&type=${strategy}`;
   }
   return http.request<ResultTable>("post", url, {
     data

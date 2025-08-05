@@ -29,6 +29,11 @@ export default ({ mode }: ConfigEnv): UserConfigExport => {
           // target: "http://10.7.0.226:31027",
           target: "https://kubedoor-test.casstime.net",
           changeOrigin: true
+        },
+        "/ws": {
+          target: "wss://kubedoor-test.casstime.net",
+          changeOrigin: true,
+          ws: true
         }
         // "/kunlun": {
         //   target: "http://10.7.0.226:31500",

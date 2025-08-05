@@ -101,9 +101,7 @@ async def get_deployment_info(ns: str, pod_name: str):
             return False, None, 0, "Pod没有找到对应的ReplicaSet"
 
         # 获取ReplicaSet信息
-        rs_data = apps_v1.read_namespaced_replica_set(
-            name=replicaset_name, namespace=ns, _request_timeout=30
-        )
+        rs_data = apps_v1.read_namespaced_replica_set(name=replicaset_name, namespace=ns, _request_timeout=30)
 
         # 从ReplicaSet的ownerReferences中找到Deployment
         rs_owner_refs = rs_data.metadata.owner_references or []
@@ -118,9 +116,7 @@ async def get_deployment_info(ns: str, pod_name: str):
             return False, None, 0, "ReplicaSet没有找到对应的Deployment"
 
         # 获取Deployment当前副本数
-        deployment_data = apps_v1.read_namespaced_deployment(
-            name=deployment_name, namespace=ns, _request_timeout=30
-        )
+        deployment_data = apps_v1.read_namespaced_deployment(name=deployment_name, namespace=ns, _request_timeout=30)
         current_replicas = deployment_data.spec.replicas or 0
 
         return True, deployment_name, current_replicas, ""
@@ -159,7 +155,9 @@ async def scale_deployment_via_api(
         # 调用kubedoor-agent的scale接口
         # kubedoor-agent运行在443端口（HTTPS）
         # 添加query参数
-        scale_url = f"https://localhost:443/api/scale?add_label={'true' if add_label else 'false'}&temp=true&isolate=true"
+        scale_url = (
+            f"https://localhost:443/api/scale?add_label={'true' if add_label else 'false'}&temp=true&isolate=true"
+        )
 
         headers = {"Content-Type": "application/json"}
 
@@ -176,9 +174,7 @@ async def scale_deployment_via_api(
         if response.status_code == 200:
             result = response.json()
             if result.get("success", False):
-                logger.info(
-                    f"通过API成功将Deployment {deployment_name} 临时扩容到 {new_replicas} 个副本"
-                )
+                logger.info(f"通过API成功将Deployment {deployment_name} 临时扩容到 {new_replicas} 个副本")
                 return True, ""
             else:
                 error_msg = result.get("message", "扩容失败")
@@ -259,9 +255,7 @@ async def modify_pod(
     # 是否扩容--->是否固定节点均衡模式--->临时扩容(开启管控模式)
     # 1. 如果需要扩容，先获取deployment信息并执行扩容
     if scale_pod:
-        success, deployment_name, current_replicas, error_msg = await get_deployment_info(
-            ns, pod_name
-        )
+        success, deployment_name, current_replicas, error_msg = await get_deployment_info(ns, pod_name)
         if not success:
             return JSONResponse(status_code=500, content={"message": error_msg})
 
@@ -287,9 +281,7 @@ async def modify_pod(
         if not scale_success:
             return JSONResponse(status_code=500, content={"message": scale_error})
 
-        logger.info(
-            f"Deployment {deployment_name} 从 {current_replicas} 个副本临时扩容到 {new_replicas} 个副本"
-        )
+        logger.info(f"Deployment {deployment_name} 从 {current_replicas} 个副本临时扩容到 {new_replicas} 个副本")
 
     # 3. 修改pod标签
     success, status = await modify_pod_label(ns, pod_name)
@@ -301,9 +293,7 @@ async def modify_pod(
     # asyncio.create_task(delete_pod(ns, pod_name))
 
     if scale_pod:
-        success_msg = (
-            f"Deployment {deployment_name} 临时扩容到 {new_replicas} 个副本并成功修改app标签"
-        )
+        success_msg = f"Deployment {deployment_name} 临时扩容到 {new_replicas} 个副本并成功修改app标签"
     else:
         success_msg = "app标签修改成功"
 
@@ -389,9 +379,7 @@ async def execute_in_pod(env, ns, v1, pod_name, type, file_name="not_found"):
             message = f"dump失败"
     if type == "jfr":
         # 解锁JFR功能
-        command_unlock = (
-            f"env -u JAVA_TOOL_OPTIONS jcmd `pidof -s java` VM.unlock\_commercial\_features"
-        )
+        command_unlock = f"env -u JAVA_TOOL_OPTIONS jcmd `pidof -s java` VM.unlock\_commercial\_features"
         status, message = await execute_command(command_unlock, v1, pod_name, ns)
         if not status:
             return status, message + '\n' + "jfr解锁失败"
@@ -529,13 +517,58 @@ async def get_pod_logs(env: str, ns: str, pod: str, lines: int = 100):
             return JSONResponse(status_code=500, content={"message": error_msg})
 
         # 获取pod日志
-        logs = v1.read_namespaced_pod_log(
-            name=pod, namespace=ns, tail_lines=lines, _request_timeout=30
-        )
+        logs = v1.read_namespaced_pod_log(name=pod, namespace=ns, tail_lines=lines, _request_timeout=30)
         return {"message": logs, "success": True}
     except ApiException as e:
         logger.exception(f"获取Pod日志时出现异常: {e}")
         return JSONResponse(status_code=500, content={"message": f"获取Pod日志失败: {str(e)}"})
+
+
+@app.get("/api/pod/get_previous_logs")
+async def get_pod_previous_logs(env: str, ns: str, pod: str, lines: int = 100):
+    """
+    获取pod重启前的日志（previous container logs）
+    等同于命令: kubectl logs --tail=100 pod_name --previous
+    """
+    try:
+        config = load_incluster_config()
+        client.Configuration.set_default(config)
+        v1 = client.CoreV1Api()
+
+        # 检查pod是否存在
+        try:
+            v1.read_namespaced_pod(name=pod, namespace=ns, _request_timeout=30)
+        except Exception as e:
+            error_msg = f"在命名空间 [{ns}] 中未找到pod [{pod}]"
+            logger.error(error_msg)
+            return JSONResponse(status_code=500, content={"message": error_msg})
+
+        # 获取pod重启前的日志
+        try:
+            logs = v1.read_namespaced_pod_log(
+                name=pod,
+                namespace=ns,
+                tail_lines=lines,
+                previous=True,  # 关键参数：获取前一个容器的日志
+                _request_timeout=30,
+            )
+            # send_md(f"获取pod重启前日志成功，共{lines}行", env, ns, pod)
+            return {"message": logs, "success": True}
+        except ApiException as api_e:
+            # 如果没有previous容器或者previous容器没有日志
+            if api_e.status == 400 or "previous terminated container" in str(api_e).lower():
+                error_msg = f"Pod [{pod}] 没有重启前的日志记录，可能该pod从未重启过"
+                logger.warning(error_msg)
+                return JSONResponse(status_code=404, content={"message": error_msg})
+            else:
+                raise api_e
+
+    except ApiException as e:
+        logger.exception(f"获取Pod重启前日志时出现异常: {e}")
+        return JSONResponse(status_code=500, content={"message": f"获取Pod重启前日志失败: {str(e)}"})
+    except Exception as e:
+        logger.exception(f"获取Pod重启前日志时出现未知异常: {e}")
+        return JSONResponse(status_code=500, content={"message": f"获取Pod重启前日志失败: {str(e)}"})
 
 
 if __name__ == "__main__":

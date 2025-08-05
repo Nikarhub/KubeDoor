@@ -58,6 +58,7 @@ export function useResource() {
         draggable: true,
         fullscreen: deviceDetection(),
         closeOnClickModal: false,
+        sureBtnLoading: true,
         contentRenderer: () => h(scale, { ref: ScaleRef }),
         beforeSure: async done => {
           const scaleData = await ScaleRef.value.getData();
@@ -82,7 +83,8 @@ export function useResource() {
                 scaleData.tempData.add_label,
                 params,
                 params.length > 1 ? scaleData.tempData.interval : undefined,
-                scaleData.temp
+                scaleData.temp,
+                scaleData.strategy
               );
             } else {
               let tempData = {
@@ -102,7 +104,8 @@ export function useResource() {
                 currentEnv,
                 scaleData.tempData.add_label,
                 tempData,
-                scaleData.temp
+                scaleData.temp,
+                scaleData.strategy
               );
             }
 

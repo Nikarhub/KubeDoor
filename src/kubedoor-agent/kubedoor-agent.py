@@ -9,6 +9,8 @@ from kubernetes_asyncio.client.rest import ApiException
 from datetime import datetime, timedelta, timezone
 from loguru import logger
 import utils
+import configmap_manager
+import service_manager
 import re
 
 # 配置日志
@@ -29,6 +31,8 @@ admission_api = None  # AdmissionregistrationV1Api
 custom_api = None  # CustomObjectsApi（用于访问Metrics API）
 # 用于存储 WebSocket 请求的 Future
 request_futures = {}
+# 存储Pod日志流任务
+pod_logs_tasks = {}
 
 
 def init_kubernetes():
@@ -68,6 +72,60 @@ async def handle_http_request(
     await ws.send_json({"type": "response", "request_id": request_id, "response": response_data})
 
 
+async def stream_pod_logs(
+    ws: ClientWebSocketResponse, connection_id: str, namespace: str, pod_name: str, container: str = ""
+):
+    """流式获取Pod日志并发送给master"""
+    try:
+        logger.info(f"开始获取Pod日志: {namespace}/{pod_name}")
+
+        # 发送连接成功消息
+        await ws.send_json({"type": "pod_logs", "connection_id": connection_id, "status": "connected"})
+
+        # 使用kubernetes_asyncio的日志流API
+        log_stream = await core_v1.read_namespaced_pod_log(
+            name=pod_name,
+            namespace=namespace,
+            container=container if container else None,
+            follow=True,
+            tail_lines=100,
+            timestamps=False,
+            _preload_content=False,
+        )
+
+        # 流式读取日志
+        buffer = ""
+        async for chunk in log_stream.content:
+            if chunk:
+                try:
+                    buffer += chunk.decode('utf-8', errors='ignore')
+                    lines = buffer.split('\n')
+                    buffer = lines[-1]  # 保留最后一行（可能不完整）
+
+                    for line in lines[:-1]:
+                        if line.strip():
+                            # 直接发送纯净的日志内容，不包装成JSON
+                            await ws.send_str(line)
+                except Exception as decode_error:
+                    logger.warning(f"解码日志行失败: {decode_error}")
+                    continue
+
+    except asyncio.CancelledError:
+        logger.info(f"Pod日志流被取消: {connection_id}")
+        await ws.send_json({"type": "pod_logs", "connection_id": connection_id, "status": "disconnected"})
+    except ApiException as e:
+        error_msg = f"Kubernetes API错误: {e.status} - {e.reason}"
+        logger.error(f"Pod日志流API异常: {connection_id}, 错误: {error_msg}")
+        await ws.send_json({"type": "pod_logs", "connection_id": connection_id, "error": error_msg})
+    except Exception as e:
+        logger.error(f"Pod日志流异常: {connection_id}, 错误: {e}")
+        await ws.send_json({"type": "pod_logs", "connection_id": connection_id, "error": str(e)})
+    finally:
+        # 清理任务
+        if connection_id in pod_logs_tasks:
+            del pod_logs_tasks[connection_id]
+
+
 async def process_request(ws: ClientWebSocketResponse):
     """处理服务端发送的请求"""
     async for msg in ws:
@@ -95,6 +153,22 @@ async def process_request(ws: ClientWebSocketResponse):
                     else 'https://127.0.0.1' + data["path"]
                 )
                 asyncio.create_task(handle_http_request(ws, request_id, method, query, body, path))
+            elif data.get("type") == "start_pod_logs":
+                # 开始Pod日志流
+                connection_id = data.get("connection_id")
+                namespace = data.get("namespace")
+                pod_name = data.get("pod_name")
+                container = data.get("container", "")
+                logger.info(f"开始Pod日志流: {connection_id}")
+                task = asyncio.create_task(stream_pod_logs(ws, connection_id, namespace, pod_name, container))
+                pod_logs_tasks[connection_id] = task
+            elif data.get("type") == "stop_pod_logs":
+                # 停止Pod日志流
+                connection_id = data.get("connection_id")
+                logger.info(f"停止Pod日志流: {connection_id}")
+                if connection_id in pod_logs_tasks:
+                    pod_logs_tasks[connection_id].cancel()
+                    del pod_logs_tasks[connection_id]
         elif msg.type == WSMsgType.ERROR:
             logger.error(f"WebSocket 错误：{msg.data}")
 
@@ -138,9 +212,7 @@ async def delete_cronjob_or_not(cronjob_name, job_type):
             logger.info(f"CronJob '{cronjob_name}' deleted successfully.")
         except ApiException as e:
             logger.exception(f"删除 CronJob '{cronjob_name}' 时出错: {e}")
-            utils.send_msg(
-                f"Error when deleting CronJob '【{utils.PROM_K8S_TAG_VALUE}】{cronjob_name}'!"
-            )
+            utils.send_msg(f"Error when deleting CronJob '【{utils.PROM_K8S_TAG_VALUE}】{cronjob_name}'!")
 
 
 async def health_check(request):
@@ -160,9 +232,7 @@ async def update_image(request):
         new_image = f"{image_name}:{new_image_tag}"
         deployment.spec.template.spec.containers[0].image = new_image
 
-        await v1.patch_namespaced_deployment(
-            name=deployment_name, namespace=namespace, body=deployment
-        )
+        await v1.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=deployment)
         utils.send_msg(
             f"【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】更新镜像【{new_image_tag}】成功。"
         )
@@ -181,6 +251,7 @@ async def scale(request):
     request_info = await request.json()
     interval = request.query.get("interval")
     add_label = request.query.get("add_label")
+    res_type = request.query.get("type")
     temp = request.query.get("temp")
     isolate = request.query.get("isolate")
     error_list = []
@@ -199,9 +270,7 @@ async def scale(request):
             if not deployment_obj:
                 reason = f"未找到【{namespace}】【{deployment_name}】"
                 logger.error(reason)
-                error_list.append(
-                    {'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason}
-                )
+                error_list.append({'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason})
                 continue
 
             # 判断扩容还是缩容
@@ -213,17 +282,12 @@ async def scale(request):
                 if deployment_obj.metadata.annotations is None:
                     deployment_obj.metadata.annotations = {}
                 current_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                deployment_obj.metadata.annotations['scale.temp'] = (
-                    f"{current_time}@{current_replicas}-->{num}"
-                )
+                deployment_obj.metadata.annotations['scale.temp'] = f"{current_time}@{current_replicas}-->{num}"
                 logger.info(f"添加临时扩缩容标记: {current_time}@{current_replicas}-->{num}")
             else:
                 # 非临时扩缩容，删除临时标记
                 del_scale_temp = 0
-                if (
-                    deployment_obj.metadata.annotations
-                    and 'scale.temp' in deployment_obj.metadata.annotations
-                ):
+                if deployment_obj.metadata.annotations and 'scale.temp' in deployment_obj.metadata.annotations:
                     # 使用patch body方式删除注解，设置为None告诉Kubernetes API删除该key
                     deployment_obj.metadata.annotations['scale.temp'] = None
                     del_scale_temp = 1
@@ -236,20 +300,18 @@ async def scale(request):
                         {"message": f"【{namespace}】【{deployment_name}】副本数不能超过节点总数"},
                         status=500,
                     )
-                node_cpu_list = request_info[0].get("node_cpu_list")
-                logger.info(f"节点CPU情况: {node_cpu_list}")
-                logger.info(f"执行扩容，目标副本数: {num}")
+                node_cpu_list = request_info[0].get("node_cpu_list")  # kubedoor-master scale接口追加的变量
+                logger.info(f"节点{res_type}情况: {node_cpu_list}")
+                logger.info(f"扩缩容策略：根据【节点{res_type}】情况，执行扩容，目标副本数: {num}")
                 # 判断已有标签数
-                labeled_nodes_count = await get_labeled_nodes_count(
-                    namespace, deployment_name, nodes
-                )
+                labeled_nodes_count = await get_labeled_nodes_count(namespace, deployment_name, nodes)
                 if isolate == 'true':
                     add_isolate = 1
                 else:
                     add_isolate = 0
                 if labeled_nodes_count < num + add_isolate:
                     nodes_to_label_count = num + add_isolate - labeled_nodes_count
-                    # 选择 CPU 使用率最低的节点，直到满足扩容后的副本数
+                    # 选择当前 CPU 使用率最低的节点，直到满足扩容后的副本数
                     available_nodes = await select_least_loaded_nodes(
                         namespace, nodes_to_label_count, deployment_name, node_cpu_list
                     )
@@ -275,32 +337,61 @@ async def scale(request):
                 else:
                     logger.info(f"已有{labeled_nodes_count}个节点有标签，无需再打标签")
 
-            elif num < current_replicas:
+            elif num < current_replicas and add_label == 'true':
+                node_cpu_list = request_info[0].get("node_cpu_list")  # kubedoor-master scale接口追加的变量
+                logger.info(f"节点CPU情况: {node_cpu_list}")
                 logger.info(f"执行缩容，目标副本数: {num}")
+                del_label_count = current_replicas - num
+                # 选择当前 CPU 使用率最高的节点，直到满足缩容后的副本数
+                available_nodes = await select_del_label_nodes(
+                    namespace, del_label_count, deployment_name, node_cpu_list
+                )
+                for node in available_nodes:
+                    await del_node_with_label(namespace, node, deployment_name)
+                # 删除available_nodes中的pod
+                await delete_pods_in_available_nodes(namespace, deployment_name, available_nodes)
+                # 删除pod后等待一段时间，让deployment控制器完成pod重建
+                logger.info("等待deployment控制器完成pod重建...")
+                await asyncio.sleep(2)
+
             elif num == current_replicas:
                 logger.info(f"副本数没有变化，无需操作")
             else:
-                logger.info(f"普通模式扩容")
+                logger.info(f"普通模式扩缩容")
 
-            deployment_obj.spec.replicas = num
-            logger.info(
-                f"Deployment【{deployment_name}】副本数更改为 {num}，如已接入准入控制, 实际变更已数据库中数据为准。"
-            )
+            # 重试机制处理409冲突
+            max_retries = 3
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    # 重新获取deployment对象，避免resourceVersion冲突
+                    if num < current_replicas and add_label == 'true':
+                        deployment_obj = await v1.read_namespaced_deployment(deployment_name, namespace)
+                    deployment_obj.spec.replicas = num
+                    logger.info(
+                        f"Deployment【{deployment_name}】副本数更改为 {num}，如已接入准入控制, 实际变更已数据库中数据为准。"
+                    )
 
-            # 如果是临时扩缩容，需要使用完整的patch方法来保存annotations
-            if temp == 'true' or del_scale_temp == 1:
-                await v1.patch_namespaced_deployment(deployment_name, namespace, deployment_obj)
-            else:
-                await v1.patch_namespaced_deployment_scale(
-                    deployment_name, namespace, deployment_obj
-                )
+                    # 如果是临时扩缩容，需要使用完整的patch方法来保存annotations
+                    if temp == 'true' or del_scale_temp == 1:
+                        await v1.patch_namespaced_deployment(deployment_name, namespace, deployment_obj)
+                    else:
+                        await v1.patch_namespaced_deployment_scale(deployment_name, namespace, deployment_obj)
+                    break  # 成功则跳出重试循环
+                except ApiException as patch_e:
+                    if patch_e.status == 409 and retry_count < max_retries - 1:
+                        retry_count += 1
+                        logger.warning(f"遇到409冲突，第{retry_count}次重试...")
+                        await asyncio.sleep(1)  # 等待1秒后重试
+                    else:
+                        raise patch_e  # 非409错误或重试次数用完，抛出异常
 
             if interval and index != len(request_info) - 1:
                 logger.info(f"暂停 {interval}s...")
                 await asyncio.sleep(int(interval))
 
             utils.send_msg(
-                f"'【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】' has been scaled!"
+                f"'【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】' has been scaled! {current_replicas} --> {num}"
             )
 
             if job_name:
@@ -311,9 +402,7 @@ async def scale(request):
                 reason = json.loads(e.body).get("message", str(e))
             except:
                 reason = str(e)
-            error_list.append(
-                {'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason}
-            )
+            error_list.append({'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason})
 
     if error_list:
         return web.json_response({"message": f"以下服务未扩缩容成功{error_list}", "success": False})
@@ -327,11 +416,7 @@ async def reboot(request):
     interval = request.query.get("interval")
     patch = {
         "spec": {
-            "template": {
-                "metadata": {
-                    "annotations": {"kubectl.kubernetes.io/restartedAt": datetime.now().isoformat()}
-                }
-            }
+            "template": {"metadata": {"annotations": {"kubectl.kubernetes.io/restartedAt": datetime.now().isoformat()}}}
         }
     }
     error_list = []
@@ -348,23 +433,17 @@ async def reboot(request):
             if not deployment_obj:
                 reason = f"未找到【{namespace}】【{deployment_name}】"
                 logger.error(reason)
-                error_list.append(
-                    {'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason}
-                )
+                error_list.append({'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason})
                 continue
 
-            logger.info(
-                f"重启 Deployment【{deployment_name}】，如已接入准入控制, 实际变更已数据库中数据为准。"
-            )
+            logger.info(f"重启 Deployment【{deployment_name}】，如已接入准入控制, 实际变更已数据库中数据为准。")
             await v1.patch_namespaced_deployment(deployment_name, namespace, patch)
 
             if interval and index != len(request_info) - 1:
                 logger.info(f"暂停 {interval}s...")
                 await asyncio.sleep(int(interval))
 
-            utils.send_msg(
-                f"'【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】' has been restarted!"
-            )
+            utils.send_msg(f"'【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】' has been restarted!")
 
             if job_name:
                 await delete_cronjob_or_not(job_name, job_type)
@@ -374,9 +453,7 @@ async def reboot(request):
                 reason = json.loads(e.body).get("message", str(e))
             except:
                 reason = str(e)
-            error_list.append(
-                {'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason}
-            )
+            error_list.append({'namespace': namespace, 'deployment_name': deployment_name, 'reason': reason})
 
     return web.json_response({"message": "ok", "error_list": error_list})
 
@@ -393,9 +470,7 @@ async def cron(request):
     deployment_name = service[0].get("deployment_name")
     name_pre = f"{type_expr}-{'once' if time_expr else 'cron'}-{deployment_name}"
     job_type = "once" if time_expr else "cron"
-    cron_new = (
-        f"{time_expr[4]} {time_expr[3]} {time_expr[2]} {time_expr[1]} *" if time_expr else cron_expr
-    )
+    cron_new = f"{time_expr[4]} {time_expr[3]} {time_expr[2]} {time_expr[1]} *" if time_expr else cron_expr
     service[0]["job_name"] = name_pre
     service[0]["job_type"] = job_type
 
@@ -448,9 +523,7 @@ async def cron(request):
         utils.send_msg(f'【{utils.PROM_K8S_TAG_VALUE}】{content}')
         return web.json_response({"message": "ok"})
     except Exception as e:
-        error_message = (
-            json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
-        )
+        error_message = json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
         logger.error(error_message)
         return web.json_response({"message": error_message}, status=500)
 
@@ -483,9 +556,7 @@ async def get_mutating_webhook():
         if e.status == 404:
             logger.error(f"MutatingWebhookConfiguration '{webhook_name}' does not exist.")
             return {"is_on": False}
-        error_message = (
-            json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
-        )
+        error_message = json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
         logger.error(f"Exception when reading MutatingWebhookConfiguration: {e}")
         return {"message": error_message}
 
@@ -518,9 +589,7 @@ async def create_mutating_webhook():
                 match_policy="Equivalent",
                 namespace_selector=client.V1LabelSelector(
                     match_expressions=[
-                        client.V1LabelSelectorRequirement(
-                            key="kubedoor-ignore", operator="DoesNotExist"
-                        )
+                        client.V1LabelSelectorRequirement(key="kubedoor-ignore", operator="DoesNotExist")
                     ]
                 ),
                 side_effects="None",
@@ -537,9 +606,7 @@ async def create_mutating_webhook():
         await update_namespace_label("kube-system", "add")
         await update_namespace_label("kubedoor", "add")
     except ApiException as e:
-        error_message = (
-            json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
-        )
+        error_message = json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
         logger.error(f"Exception when creating MutatingWebhookConfiguration: {e}")
         return {"message": error_message}
 
@@ -553,9 +620,7 @@ async def delete_mutating_webhook():
         await update_namespace_label("kube-system", "delete")
         await update_namespace_label("kubedoor", "delete")
     except ApiException as e:
-        error_message = (
-            json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
-        )
+        error_message = json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else "执行失败"
         logger.error(f"Exception when deleting MutatingWebhookConfiguration: {e}")
         return {"message": error_message}
 
@@ -596,9 +661,7 @@ async def get_namespace_events(request):
             logger.info("获取所有命名空间的事件")
 
         # 获取事件
-        events = await core_v1.list_event_for_all_namespaces(
-            field_selector=field_selector, _request_timeout=30
-        )
+        events = await core_v1.list_event_for_all_namespaces(field_selector=field_selector, _request_timeout=30)
 
         # 格式化事件数据
         event_list = []
@@ -616,16 +679,10 @@ async def get_namespace_events(request):
                         "namespace": event.involved_object.namespace,
                     },
                     "count": event.count,
-                    "first_timestamp": (
-                        event.first_timestamp.isoformat() if event.first_timestamp else None
-                    ),
-                    "last_timestamp": (
-                        event.last_timestamp.isoformat() if event.last_timestamp else None
-                    ),
+                    "first_timestamp": (event.first_timestamp.isoformat() if event.first_timestamp else None),
+                    "last_timestamp": (event.last_timestamp.isoformat() if event.last_timestamp else None),
                     "source": (
-                        {"component": event.source.component, "host": event.source.host}
-                        if event.source
-                        else None
+                        {"component": event.source.component, "host": event.source.host} if event.source else None
                     ),
                 }
             )
@@ -683,16 +740,12 @@ async def get_pod_events(namespace, pod_name):
     try:
         # 使用field_selector过滤特定Pod的事件
         field_selector = f"involvedObject.kind=Pod,involvedObject.name={pod_name}"
-        events = await core_v1.list_namespaced_event(
-            namespace=namespace, field_selector=field_selector
-        )
+        events = await core_v1.list_namespaced_event(namespace=namespace, field_selector=field_selector)
 
         # 按时间降序排序，获取最近的事件
         sorted_events = sorted(
             events.items,
-            key=lambda event: event.last_timestamp
-            or event.first_timestamp
-            or event.metadata.creation_timestamp,
+            key=lambda event: event.last_timestamp or event.first_timestamp or event.metadata.creation_timestamp,
             reverse=True,
         )
 
@@ -713,9 +766,7 @@ async def get_deployment_pods(request):
     deployment_name = request.query.get("deployment")
 
     if not namespace or not deployment_name:
-        return web.json_response(
-            {"message": "命名空间和部署名称参数不能为空", "success": False}, status=400
-        )
+        return web.json_response({"message": "命名空间和部署名称参数不能为空", "success": False}, status=400)
 
     try:
         # 获取指定Deployment的标签选择器
@@ -723,9 +774,7 @@ async def get_deployment_pods(request):
         selector = deployment.spec.selector.match_labels
         selector_str = ",".join([f"{k}={v}" for k, v in selector.items()])
         # 1. 通过标签选择器查询相关的Pod
-        pods_by_label = await core_v1.list_namespaced_pod(
-            namespace=namespace, label_selector=selector_str
-        )
+        pods_by_label = await core_v1.list_namespaced_pod(namespace=namespace, label_selector=selector_str)
         lenmline = pods_by_label.items[0].metadata.name.count("-")
         # 2. 通过 ownerReferences 查询所有属于该 deployment 的 pod（即使 label 被修改也能查到）
         all_pods = await core_v1.list_namespaced_pod(namespace=namespace)
@@ -807,17 +856,12 @@ async def get_deployment_pods(request):
                 if not pod_status_reason:
                     event_reason, event_message = await get_pod_events(namespace, pod.metadata.name)
                     if event_message:
-                        pod_status_reason = (
-                            f"{event_reason}: {event_message}" if event_reason else event_message
-                        )
+                        pod_status_reason = f"{event_reason}: {event_message}" if event_reason else event_message
 
             # 获取Last Status，只在Pod有重启时才获取
             last_status = ""
             restart_count = (
-                sum(
-                    container_status.restart_count
-                    for container_status in pod.status.container_statuses
-                )
+                sum(container_status.restart_count for container_status in pod.status.container_statuses)
                 if pod.status.container_statuses
                 else 0
             )
@@ -839,9 +883,7 @@ async def get_deployment_pods(request):
                 "name": pod.metadata.name,
                 "status": pod.status.phase,
                 "ready": (
-                    all(
-                        container_status.ready for container_status in pod.status.container_statuses
-                    )
+                    all(container_status.ready for container_status in pod.status.container_statuses)
                     if pod.status.container_statuses
                     else False
                 ),
@@ -866,9 +908,7 @@ async def get_deployment_pods(request):
         )
     except ApiException as e:
         error_message = (
-            json.loads(e.body).get("message")
-            if hasattr(e, 'body') and e.body
-            else f"获取Pod信息失败: {str(e)}"
+            json.loads(e.body).get("message") if hasattr(e, 'body') and e.body else f"获取Pod信息失败: {str(e)}"
         )
         logger.error(error_message)
         return web.json_response({"message": error_message, "success": False}, status=500)
@@ -1121,6 +1161,51 @@ async def delete_pods_on_node(namespace, deployment_name, node_name):
         raise Exception(f"删除pod失败: {str(e)}")
 
 
+async def delete_pods_in_available_nodes(namespace, deployment_name, available_nodes):
+    """根据namespace和deployment_name精确找到deployment的所有pod，删除在available_nodes中的pod"""
+    try:
+        # 1. 获取Deployment的标签选择器
+        deployment = await v1.read_namespaced_deployment(deployment_name, namespace)
+        selector = deployment.spec.selector.match_labels
+        label_selector = ",".join([f"{k}={v}" for k, v in selector.items()])
+
+        deleted_count = 0
+        target_delete_count = len(available_nodes)
+        deleted_pods = []
+
+        # 2. 遍历每个available_node，查找并删除该节点上的pod
+        for node_name in available_nodes:
+            if deleted_count >= target_delete_count:
+                break
+
+            # 使用字段选择器过滤节点 + 标签选择器过滤Pod
+            field_selector = f"spec.nodeName={node_name}"
+            pods = await core_v1.list_namespaced_pod(
+                namespace=namespace, label_selector=label_selector, field_selector=field_selector
+            )
+
+            # 3. 删除找到的pod（每个节点只删除一个pod）
+            for pod in pods.items:
+                if deleted_count >= target_delete_count:
+                    break
+
+                logger.info(f"删除pod: {pod.metadata.name} (节点: {pod.spec.node_name})")
+                await core_v1.delete_namespaced_pod(name=pod.metadata.name, namespace=namespace)
+                deleted_pods.append(pod.metadata.name)
+                deleted_count += 1
+                break  # 每个节点只删除一个pod
+
+        logger.info(f"删除了 {deleted_count} 个 {deployment_name} 的pod，目标删除数量: {target_delete_count}")
+        return deleted_pods
+
+    except ApiException as e:
+        logger.error(f"删除pod时出错: {e}")
+        raise Exception(f"删除pod失败: {str(e)}")
+    except Exception as e:
+        logger.error(f"删除pod时发生未知错误: {e}")
+        raise Exception(f"删除pod失败: {str(e)}")
+
+
 def admis_pass(uid):
     return {
         "apiVersion": "admission.k8s.io/v1",
@@ -1167,11 +1252,7 @@ def get_deployment_affinity(namespace, deployment_name, pod_label):
         "podAntiAffinity": {
             "requiredDuringSchedulingIgnoredDuringExecution": [
                 {
-                    "labelSelector": {
-                        "matchExpressions": [
-                            {"key": "app", "operator": "In", "values": [pod_label]}
-                        ]
-                    },
+                    "labelSelector": {"matchExpressions": [{"key": "app", "operator": "In", "values": [pod_label]}]},
                     "topologyKey": "kubernetes.io/hostname",
                 }
             ]
@@ -1253,12 +1334,8 @@ async def update_all(
         # 如果开了强制调度开关，则要设置affinity
         info_dict = await get_pod_label_and_maxUnavailable(namespace, deployment_name)
         if not info_dict:
-            logger.error(
-                f"未查到【{namespace}】【{deployment_name}】pod标签或重启策略的maxUnavailable"
-            )
-            return web.json_response(
-                {"error": f"未查到【{namespace}】【{deployment_name}】pod标签"}, status=500
-            )
+            logger.error(f"未查到【{namespace}】【{deployment_name}】pod标签或重启策略的maxUnavailable")
+            return web.json_response({"error": f"未查到【{namespace}】【{deployment_name}】pod标签"}, status=500)
         pod_label = info_dict.get("app_label_value")
         value = get_deployment_affinity(namespace, deployment_name, pod_label)
         logger.info("配置affinity（选择节点和反亲和性）")
@@ -1281,9 +1358,7 @@ async def update_all(
         if await get_deployment_affinity_old(namespace, deployment_name):
             affinity = {"op": "replace", "path": "/spec/template/spec/affinity", "value": {}}
             change_list.append(affinity)
-            logger.info(
-                "检查到【{namespace}】【{deployment_name}】已配置节点选择，并且调度开关已关闭，affinity置空"
-            )
+            logger.info("检查到【{namespace}】【{deployment_name}】已配置节点选择，并且调度开关已关闭，affinity置空")
     # 按照数据库修改所有参数
     patch_replicas = {"op": "replace", "path": "/spec/replicas", "value": replicas}
     change_list.append(patch_replicas)
@@ -1292,27 +1367,19 @@ async def update_all(
     if request_cpu_m > 0:
         resources_dict["requests"]["cpu"] = f"{request_cpu_m}m"
     else:
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 request_cpu_m"
-        )
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 request_cpu_m")
     if request_mem_mb > 0:
         resources_dict["requests"]["memory"] = f"{request_mem_mb}Mi"
     else:
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 request_mem_mb"
-        )
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 request_mem_mb")
     if limit_cpu_m > 0:
         resources_dict["limits"]["cpu"] = f"{limit_cpu_m}m"
     else:
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 limit_cpu_m"
-        )
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 limit_cpu_m")
     if limit_mem_mb > 0:
         resources_dict["limits"]["memory"] = f"{limit_mem_mb}Mi"
     else:
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 limit_mem_mb"
-        )
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】未配置 limit_mem_mb")
     logger.info(f"改后：{resources_dict}")
     resources = {
         "op": "add",
@@ -1337,9 +1404,7 @@ async def admis_mutate(request):
     uid = request_info['request']['uid']
     namespace = object['metadata']['namespace']
     deployment_name = object['metadata']['name']
-    logger.info(
-        f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】收到请求{object}"
-    )
+    logger.info(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】收到请求{object}")
 
     # 检查临时扩缩容标记
     annotations = object.get('metadata', {}).get('annotations', {})
@@ -1376,9 +1441,7 @@ async def admis_mutate(request):
 
     response_future = asyncio.get_event_loop().create_future()
     request_futures[uid] = response_future
-    await ws_conn.send_json(
-        {"type": "admis", "request_id": uid, "namespace": namespace, "deployment": deployment_name}
-    )
+    await ws_conn.send_json({"type": "admis", "request_id": uid, "namespace": namespace, "deployment": deployment_name})
     try:
         result = await asyncio.wait_for(response_future, timeout=10)
         logger.info(f"response_future 收到 admis 响应：{uid} {result}")
@@ -1390,9 +1453,7 @@ async def admis_mutate(request):
         return web.json_response(admis_fail(uid, 504, "等待 kubedoor-master 响应超时"))
 
     if len(result) == 2:
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】{result[1]}"
-        )
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】{result[1]}")
         if result[0] == 200:
             return web.json_response(admis_pass(uid))
         return web.json_response(admis_fail(uid, result[0], result[1]))
@@ -1408,11 +1469,7 @@ async def admis_mutate(request):
         scheduler,
     ) = result
     # 副本数取值优先级：专家建议→ai建议→原本的副本数
-    replicas = (
-        pod_count_manual
-        if pod_count_manual >= 0
-        else (pod_count_ai if pod_count_ai >= 0 else pod_count)
-    )
+    replicas = pod_count_manual if pod_count_manual >= 0 else (pod_count_ai if pod_count_ai >= 0 else pod_count)
     # 如果数据库中request_cpu_m为0，设置为10；如果request_mem_mb为0，设置为1
     request_cpu_m = 10 if 0 <= request_cpu_m < 10 else request_cpu_m
     request_mem_mb = 1 if request_mem_mb == 0 else request_mem_mb
@@ -1431,9 +1488,10 @@ async def admis_mutate(request):
             admis_msg = f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】收到 create 请求，修改所有参数"
             logger.info(admis_msg)
             utils.send_msg(f'{admis_msg}\n{deploy_baseinfo}\n固定节点均衡: {scheduler}')
-            resources_dict = object['spec']['template']['spec']['containers'][0].get(
-                'resources', {"requests": {}, "limits": {}}
-            )
+            resources_dict = object['spec']['template']['spec']['containers'][0].get('resources', {}) or {}
+            # 确保 requests 和 limits 字段都存在
+            resources_dict.setdefault('requests', {})
+            resources_dict.setdefault('limits', {})
             return web.json_response(
                 await update_all(
                     replicas,
@@ -1461,9 +1519,10 @@ async def admis_mutate(request):
                 admis_msg = f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】收到 update 请求，修改所有参数"
                 logger.info(admis_msg)
                 utils.send_msg(f'{admis_msg}\n{deploy_baseinfo}\n固定节点均衡: {scheduler}')
-                resources_dict = object['spec']['template']['spec']['containers'][0].get(
-                    'resources', {"requests": {}, "limits": {}}
-                )
+                resources_dict = object['spec']['template']['spec']['containers'][0].get('resources', {}) or {}
+                # 确保 requests 和 limits 字段都存在
+                resources_dict.setdefault('requests', {})
+                resources_dict.setdefault('limits', {})
                 return web.json_response(
                     await update_all(
                         replicas,
@@ -1496,10 +1555,8 @@ async def admis_mutate(request):
             utils.send_msg(admis_msg)
             return web.json_response(admis_pass(uid))
     except Exception as e:
-        logger.error(f"【{namespace}】【{deployment_name}】Webhook 处理错误：{e}")
-        utils.send_msg(
-            f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】处理错误：{e}"
-        )
+        logger.exception(f"【{namespace}】【{deployment_name}】Webhook 处理错误：{e}")
+        utils.send_msg(f"admis:【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】处理错误：{e}")
         return web.json_response({"error": str(e)}, status=500)
 
 
@@ -1524,9 +1581,7 @@ async def delete_label(namespace, deployment_name, nodes):
         if labels and labels.get(label_key) == utils.NODE_LABLE_VALUE:
             try:
                 # 获取节点上的所有 Pod
-                all_pods = await core_v1.list_pod_for_all_namespaces(
-                    field_selector=f"spec.nodeName={node_name}"
-                )
+                all_pods = await core_v1.list_pod_for_all_namespaces(field_selector=f"spec.nodeName={node_name}")
                 for pod in all_pods.items:
                     pod_name = pod.metadata.name
                     # 判断 Pod 是否属于指定的服务 (此逻辑可根据具体服务标签调整)
@@ -1536,21 +1591,15 @@ async def delete_label(namespace, deployment_name, nodes):
             except ApiException as e:
                 logger.error(f"检查节点 {node_name} 的服务 Pod 时出现问题: {e}")
             if not flag:
-                patch_body = {
-                    "metadata": {"labels": {label_key: None}}
-                }  # 设置标签值为 None 表示删除标签
+                patch_body = {"metadata": {"labels": {label_key: None}}}  # 设置标签值为 None 表示删除标签
                 try:
                     await core_v1.patch_node(name=node_name, body=patch_body)
-                    logger.info(
-                        f"节点 {node_name}上未部署服务{deployment_name}，已删除标签 {label_key}"
-                    )
+                    logger.info(f"节点 {node_name}上未部署服务{deployment_name}，已删除标签 {label_key}")
                 except ApiException as e:
                     logger.error(f"删除节点 {node_name} 上标签 {label_key} 时出错: {e}")
 
 
-async def select_least_loaded_nodes(
-    namespace, nodes_to_label_count, deployment_name, node_cpu_list
-):
+async def select_least_loaded_nodes(namespace, nodes_to_label_count, deployment_name, node_cpu_list):
     """选择 CPU 使用率最低的节点并返回"""
     nodes = await core_v1.list_node()
     node_filter_list = []
@@ -1571,7 +1620,7 @@ async def select_least_loaded_nodes(
             continue
         if is_scheduled:
             node_filter_list.append(node.metadata.name)
-
+    logger.info(f"【扩容(低-->高)】node_cpu_list: {node_cpu_list}")
     for i in node_cpu_list:
         if i.get('name') in node_filter_list:
             sorted_nodes.append(i.get('name'))
@@ -1581,6 +1630,40 @@ async def select_least_loaded_nodes(
         return sorted_nodes[:nodes_to_label_count]
     else:
         return None
+
+
+async def select_del_label_nodes(namespace, del_label_count, deployment_name, node_cpu_list):
+    """选择 CPU 使用率最高的节点并返回"""
+    nodes = await core_v1.list_node()
+    node_filter_list = []
+    sorted_nodes = []
+
+    for node in nodes.items:
+        labels = node.metadata.labels
+        label_key = f"{namespace}.{deployment_name}"
+        if labels and labels.get(label_key) == utils.NODE_LABLE_VALUE:
+            node_filter_list.append(node.metadata.name)
+
+    # 按照percent值倒序排列，选择CPU使用率最高的节点
+    sorted_cpu_list = sorted(node_cpu_list, key=lambda x: x.get('percent', 0), reverse=True)
+    logger.info(f"【缩容(高-->低)】node_cpu_list: {sorted_cpu_list}")
+    for i in sorted_cpu_list:
+        if i.get('name') in node_filter_list:
+            sorted_nodes.append(i.get('name'))
+
+    # 返回 CPU 使用率最高的节点
+    return sorted_nodes[:del_label_count]
+
+
+async def del_node_with_label(namespace, node_name, deployment_name):
+    """为节点删除标签"""
+    label_key = f"{namespace}.{deployment_name}"  # 使用 命名空间.部署名称 作为标签键
+    patch_body = {"metadata": {"labels": {label_key: None}}}
+    try:
+        await core_v1.patch_node(name=node_name, body=patch_body)
+        logger.info(f"节点 {node_name} 上已删除标签 {label_key}")
+    except ApiException as e:
+        logger.error(f"在节点 {node_name} 上更新标签时出错: {e}")
 
 
 async def update_node_with_label(namespace, node_name, deployment_name):
@@ -1606,6 +1689,19 @@ async def setup_routes(app):
     app.router.add_get('/api/get_dpm_pods', get_deployment_pods)
     app.router.add_get('/api/nodes', get_nodes_info)
     app.router.add_post('/api/balance_node', balance_node)
+    # ConfigMap管理接口
+    app.router.add_get('/api/configmaps', lambda request: configmap_manager.get_configmap_list(core_v1, request))
+    app.router.add_get('/api/configmap/get', lambda request: configmap_manager.get_configmap_content(core_v1, request))
+    app.router.add_post(
+        '/api/configmap/update', lambda request: configmap_manager.update_configmap_content(core_v1, request)
+    )
+    # Service管理接口
+    app.router.add_get('/api/services', lambda request: service_manager.get_service_list(core_v1, request))
+    app.router.add_get('/api/service/get', lambda request: service_manager.get_service_content(core_v1, request))
+    app.router.add_post('/api/service/update', lambda request: service_manager.update_service_content(core_v1, request))
+    app.router.add_get(
+        '/api/service/endpoints', lambda request: service_manager.get_service_endpoints(core_v1, request)
+    )
 
 
 async def start_https_server():

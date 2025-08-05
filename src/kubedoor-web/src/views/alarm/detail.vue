@@ -3,7 +3,7 @@
     <!-- 顶部区域 -->
     <div
       class="top-section mb-2"
-      style="background-color: #fff; padding: 16px; border-radius: 8px"
+      style="padding: 16px; background-color: #fff; border-radius: 8px"
     >
       <!-- 搜索栏 -->
       <div>
@@ -318,13 +318,13 @@
               >
                 <span>
                   <span
-                    style="color: #f56c6c; font-weight: 800; font-size: 16px"
+                    style="font-size: 16px; font-weight: 800; color: #f56c6c"
                   >
                     {{ scope.row.count_firing }}
                   </span>
                   <span style="margin: 0 4px; font-weight: 800">/</span>
                   <span
-                    style="color: #67c23a; font-weight: 800; font-size: 16px"
+                    style="font-size: 16px; font-weight: 800; color: #67c23a"
                   >
                     {{ scope.row.count_resolved }}
                   </span>
@@ -1035,20 +1035,20 @@ onUnmounted(() => {
 <style>
 .alarm-result-dialog {
   .result-content {
-    margin: 0;
     padding: 10px;
+    margin: 0;
+    overflow-y: auto;
+    font-family: monospace;
     background: #f5f7fa;
     border-radius: 4px;
-    font-family: monospace;
-    overflow-y: auto;
   }
 }
 
 .header {
   display: flex;
+  gap: 20px;
   align-items: center;
   margin-bottom: 20px;
-  gap: 20px;
 }
 
 .header h2 {
@@ -1064,14 +1064,14 @@ onUnmounted(() => {
 
 .card-header {
   display: flex;
-  justify-content: space-between;
   align-items: center;
+  justify-content: space-between;
 }
 
 .pagination {
-  margin-top: 20px;
   display: flex;
   justify-content: flex-end;
+  margin-top: 20px;
 }
 
 /* :deep(.el-table) {
@@ -1085,9 +1085,9 @@ onUnmounted(() => {
 } */
 
 .description-text {
+  max-width: 200px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 200px;
 }
 </style>

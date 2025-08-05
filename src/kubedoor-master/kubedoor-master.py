@@ -42,7 +42,9 @@ async def forward_request(request):
             logger.info("SQL: 数据更新")
             return web.json_response({"msg": "SQL: 数据更新完成"})
         else:
-            TARGET_URL = f'http://{utils.CK_HOST}:{utils.CK_HTTP_PORT}/?add_http_cors_header=1&default_format=JSONCompact'
+            TARGET_URL = (
+                f'http://{utils.CK_HOST}:{utils.CK_HTTP_PORT}/?add_http_cors_header=1&default_format=JSONCompact'
+            )
             headers = {
                 'Authorization': await get_authorization_header(utils.CK_USER, utils.CK_PASSWORD),
                 'Cache-Control': 'no-cache',
@@ -63,6 +65,8 @@ async def forward_request(request):
 
 
 clients = {}
+# 存储Pod日志WebSocket连接
+pod_logs_connections = {}
 
 
 async def websocket_handler(request):
@@ -91,36 +95,62 @@ async def websocket_handler(request):
     try:
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
+                # 首先尝试解析为JSON
                 try:
                     data = json.loads(msg.data)
+                    # 处理JSON格式的消息
+                    if data.get("type") == "heartbeat":
+                        # 更新心跳时间
+                        clients[env]["last_heartbeat"] = time.time()
+                        clients[env]["online"] = True
+                        # logger.info(f"[心跳]客户端 env={env} ver={ver}")
+                    elif data.get("type") == "admis":
+                        request_id = data["request_id"]
+                        namespace = data["namespace"]
+                        deployment = data["deployment"]
+                        logger.info(f"==========客户端 env={env} {request_id} {namespace} {deployment}")
+                        deploy_res = utils.get_deploy_admis(env, namespace, deployment)
+                        await ws.send_json({"type": "admis", "request_id": request_id, "deploy_res": deploy_res})
+
+                    elif data.get("type") == "response":
+                        # 收到客户端的响应，存储到客户端的响应队列中
+                        request_id = data["request_id"]
+                        response = data["response"]
+                        if "response_queue" in clients[env]:
+                            clients[env]["response_queue"][request_id] = response
+                        logger.info(f"[响应]客户端 env={env}: request_id={request_id}：{response}")
+                    
+                    elif data.get("type") == "pod_logs":
+                        # 处理来自agent的Pod日志数据，转发给前端
+                        connection_id = data.get("connection_id")
+                        if connection_id in pod_logs_connections:
+                            frontend_ws = pod_logs_connections[connection_id]["ws"]
+                            try:
+                                await frontend_ws.send_json(data)
+                            except Exception as e:
+                                logger.error(f"转发日志到前端失败: {e}")
+                                # 清理断开的连接
+                                if connection_id in pod_logs_connections:
+                                    del pod_logs_connections[connection_id]
+                    else:
+                        logger.info(f"收到客户端消息：{msg.data}")
+                        
                 except json.JSONDecodeError:
-                    logger.error(f"收到无法解析的消息：{msg.data}")
-                    continue
-
-                if data.get("type") == "heartbeat":
-                    # 更新心跳时间
-                    clients[env]["last_heartbeat"] = time.time()
-                    clients[env]["online"] = True
-                    # logger.info(f"[心跳]客户端 env={env} ver={ver}")
-                elif data.get("type") == "admis":
-                    request_id = data["request_id"]
-                    namespace = data["namespace"]
-                    deployment = data["deployment"]
-                    logger.info(f"==========客户端 env={env} {request_id} {namespace} {deployment}")
-                    deploy_res = utils.get_deploy_admis(env, namespace, deployment)
-                    await ws.send_json(
-                        {"type": "admis", "request_id": request_id, "deploy_res": deploy_res}
-                    )
-
-                elif data.get("type") == "response":
-                    # 收到客户端的响应，存储到客户端的响应队列中
-                    request_id = data["request_id"]
-                    response = data["response"]
-                    if "response_queue" in clients[env]:
-                        clients[env]["response_queue"][request_id] = response
-                    logger.info(f"[响应]客户端 env={env}: request_id={request_id}：{response}")
-                else:
-                    logger.info(f"收到客户端消息：{msg.data}")
+                    # 如果不是JSON格式，可能是纯文本日志消息
+                    # 需要根据当前活跃的日志连接来转发消息
+                    log_message = msg.data.strip()
+                    if log_message:
+                        # 转发给所有活跃的前端日志连接
+                        for connection_id, connection_info in list(pod_logs_connections.items()):
+                            if connection_info["env"] == env:
+                                try:
+                                    await connection_info["ws"].send_str(log_message)
+                                except Exception as e:
+                                    logger.error(f"转发纯文本日志到前端失败: {e}")
+                                    # 清理断开的连接
+                                    if connection_id in pod_logs_connections:
+                                        del pod_logs_connections[connection_id]
+                        
             elif msg.type == WSMsgType.ERROR:
                 logger.error(f"客户端连接出错，env={env}")
     except Exception as e:
@@ -131,6 +161,89 @@ async def websocket_handler(request):
             clients[env]["online"] = False
             logger.info(f"客户端连接关闭，标记为离线，env={env}")
 
+    return ws
+
+
+async def pod_logs_websocket_handler(request):
+    """处理前端Pod日志WebSocket连接"""
+    env = request.query.get("env")
+    namespace = request.query.get("namespace")
+    pod_name = request.query.get("pod_name")
+    container = request.query.get("container", "")
+    
+    if not all([env, namespace, pod_name]):
+        return web.Response(text="缺少必要参数", status=400)
+    
+    if env not in clients or not clients[env]["online"]:
+        return web.Response(text="目标环境不在线", status=404)
+    
+    ws = web.WebSocketResponse()
+    await ws.prepare(request)
+    
+    # 生成唯一连接ID
+    connection_id = f"{env}_{namespace}_{pod_name}_{int(time.time())}"
+    
+    # 存储前端连接
+    pod_logs_connections[connection_id] = {
+        "ws": ws,
+        "env": env,
+        "namespace": namespace,
+        "pod_name": pod_name,
+        "container": container
+    }
+    
+    logger.info(f"Pod日志连接建立: {connection_id}")
+    
+    try:
+        # 向agent发送开始日志流请求
+        agent_ws = clients[env]["ws"]
+        start_message = {
+            "type": "start_pod_logs",
+            "connection_id": connection_id,
+            "namespace": namespace,
+            "pod_name": pod_name,
+            "container": container
+        }
+        await agent_ws.send_json(start_message)
+        
+        # 处理前端消息
+        async for msg in ws:
+            if msg.type == WSMsgType.TEXT:
+                try:
+                    data = json.loads(msg.data)
+                    if data.get("type") == "stop_logs":
+                        # 通知agent停止日志流
+                        stop_message = {
+                            "type": "stop_pod_logs",
+                            "connection_id": connection_id
+                        }
+                        await agent_ws.send_json(stop_message)
+                        break
+                except json.JSONDecodeError:
+                    logger.error(f"收到无法解析的前端消息：{msg.data}")
+            elif msg.type == WSMsgType.ERROR:
+                logger.error(f"前端日志连接出错: {connection_id}")
+                break
+    except Exception as e:
+        logger.error(f"Pod日志连接异常: {connection_id}, 错误: {e}")
+    finally:
+        # 清理连接
+        if connection_id in pod_logs_connections:
+            del pod_logs_connections[connection_id]
+        
+        # 通知agent停止日志流
+        try:
+            if env in clients and clients[env]["online"]:
+                stop_message = {
+                    "type": "stop_pod_logs",
+                    "connection_id": connection_id
+                }
+                await clients[env]["ws"].send_json(stop_message)
+        except Exception as e:
+            logger.error(f"通知agent停止日志流失败: {e}")
+        
+        logger.info(f"Pod日志连接关闭: {connection_id}")
+    
     return ws
 
 
@@ -152,7 +265,8 @@ async def http_handler(request):
     # 扩缩容接口要查询节点cpu使用率并传给agent
     logger.info(path)
     if query_params.get("add_label") == 'true':
-        node_cpu_list = await utils.get_node_cpu_per(query_params.get("env"))
+        res_type = query_params.get("type", "cpu")
+        node_cpu_list = await utils.get_node_res_rank(query_params.get("env"), res_type)
         if path == "/api/scale":
             body[0]['node_cpu_list'] = node_cpu_list
         elif path == "/api/pod/modify_pod":
@@ -173,7 +287,7 @@ async def http_handler(request):
         for i in source_deployment_list:
             flag = True
             for j in target_deployment_list:
-                if i.get('namespace') == j.get('namespace') and i.get('pod') == j.get('pod'):
+                if i.get('namespace') == j.get('namespace') and i.get('created_by_name') == j.get('created_by_name'):
                     flag = False
                     break
             if flag:
@@ -217,9 +331,7 @@ async def status_handler(request):
     agents_status = {
         env: {
             "online": data["online"],
-            "last_heartbeat": datetime.fromtimestamp(data["last_heartbeat"]).strftime(
-                "%Y-%m-%d %H:%M:%S"
-            ),
+            "last_heartbeat": datetime.fromtimestamp(data["last_heartbeat"]).strftime("%Y-%m-%d %H:%M:%S"),
             "ver": data["ver"],
         }
         for env, data in clients.items()
@@ -298,10 +410,7 @@ async def init_peak_data(request):
         days = int(request.query.get("days", 2))  # 不传则采集昨天+今天
         peak_hours = request.query.get("peak_hours", "10:00:00-11:30:00")
         logger.info(f"🐛开始获取{env_value}，{days}天，每日【{peak_hours}】高峰期数据")
-        namespace_str = ".*"  # utils.NAMESPACE_LIST.replace(",", "|")
-        duration_str, start_time_part, end_time_part = utils.calculate_peak_duration_and_end_time(
-            peak_hours
-        )
+        duration_str, start_time_part, end_time_part = utils.calculate_peak_duration_and_end_time(peak_hours)
 
         for i in range(0, days):
             # 计算结束时间字符串
@@ -313,13 +422,9 @@ async def init_peak_data(request):
                 continue
             utils.check_and_delete_day_data(end_time_full, env_value)
             logger.info(f"🚀获取{end_time_full}的数据======")
-            k8s_metrics_list = utils.merged_dict(
-                env_key, env_value, namespace_str, duration_str, start_time_full, end_time_full
-            )
+            k8s_metrics_list = utils.merged_dict(env_key, env_value, duration_str, end_time_full)
             utils.metrics_to_ck(k8s_metrics_list)
-        logger.info(
-            f"🚀{env_value}: 高峰期数据采集流程结束,开始取最近10天cpu使用最高的一天pod数据, 写入管控表"
-        )
+        logger.info(f"🚀{env_value}: 高峰期数据采集流程结束,开始取最近10天cpu使用最高的一天pod数据, 写入管控表")
 
         # 采集完成后，取最近10天cpu数据最高的一天pod，数据写入管控表
         resources = utils.get_list_from_resources(env_value)
@@ -358,6 +463,7 @@ async def cleanup_background_tasks(app):
 
 app = web.Application()
 app.router.add_get("/ws", websocket_handler)
+app.router.add_get("/ws/pod-logs", pod_logs_websocket_handler)
 app.router.add_post('/api/sql', forward_request)
 app.router.add_get("/api/agent_status", status_handler)
 app.router.add_get("/api/prom_ns", prom_ns_handler)

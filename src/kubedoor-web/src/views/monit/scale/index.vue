@@ -28,7 +28,8 @@ const form = ref({
   time: "",
   cron: "",
   add_label: props.showAddLabel ? true : false,
-  temp: false
+  temp: false,
+  strategy: "cpu"
 });
 
 const podCount = ref(props.params?.podCount || 0);
@@ -81,7 +82,8 @@ function getData() {
         resolve({
           podCount: podCount.value,
           tempData: tempData,
-          temp: form.value.temp
+          temp: form.value.temp,
+          strategy: form.value.strategy
         });
       }
     });
@@ -147,6 +149,27 @@ defineExpose({ getData });
           <re-col :offset="2" :value="20" :xs="24" :sm="24">
             <el-form-item :label="'临时扩容'" label-width="70px" prop="temp">
               <el-checkbox v-model="form.temp" />
+            </el-form-item>
+          </re-col>
+          <re-col
+            v-if="props.showAddLabel && form.add_label"
+            :offset="2"
+            :value="20"
+            :xs="24"
+            :sm="24"
+          >
+            <el-form-item
+              :label="'扩缩容策略(基于节点):'"
+              label-width="100px"
+              prop="strategy"
+            >
+              <el-radio-group v-model="form.strategy">
+                <el-radio label="cpu">当前CPU</el-radio>
+                <el-radio label="mem">当前内存</el-radio>
+                <el-radio label="peak_cpu">峰值CPU</el-radio>
+                <el-radio label="peak_mem">峰值内存</el-radio>
+                <el-radio label="pod">Pod数</el-radio>
+              </el-radio-group>
             </el-form-item>
           </re-col>
         </template>

@@ -3,12 +3,12 @@ import sys
 import time
 import json
 import requests
-from datetime import datetime, timedelta
-from collections import defaultdict
+from datetime import datetime
 from clickhouse_driver import Client
 from clickhouse_driver.errors import ServerException
 from functools import wraps
 from loguru import logger
+from promql import query_dict, node_rank_query
 
 logger.remove()
 logger.add(
@@ -16,7 +16,6 @@ logger.add(
     format='<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [<level>{level}</level>] <level>{message}</level>',
     level='INFO',
 )
-
 
 # 环境变量
 CK_DATABASE = os.environ.get('CK_DATABASE')
@@ -67,7 +66,6 @@ def execute_query(query):
 
 
 query_list = [
-    "pod_num",
     "core_usage",
     "core_usage_percent",
     "wss_usage_MB",
@@ -77,28 +75,6 @@ query_list = [
     "request_core",
     "request_mem_MB",
 ]
-query_dict = {
-    # pod数
-    "pod_num": 'min_over_time(count(label_replace(kube_pod_container_info{{env}container!="",container!="POD",namespace=~"{namespace}"}, "deployment", "$1", "pod", "^(.*)-[a-z0-9]+-[a-z0-9]+$")) by({env_key}deployment,namespace)[{duration}:])',
-    # 使用核数P95
-    "core_usage": 'quantile_over_time(0.95, avg by ({env_key}namespace, deployment) (label_replace(irate(container_cpu_usage_seconds_total{{env}container!="",container!="POD",namespace=~"{namespace}"}[2m]),"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$"))[{duration}:])',
-    # CPU使用率P95
-    "core_usage_percent": 'quantile_over_time(0.95,(sum by ({env_key}namespace, deployment)(label_replace(irate(container_cpu_usage_seconds_total{{env}container!="",container!="POD",namespace=~"{namespace}"}[2m]),"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$"))/sum by ({env_key}namespace, deployment)(label_replace(container_spec_cpu_quota{{env}container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")/100000)*100)[{duration}:]) != Inf',
-    # WSS内存使用MB P95
-    "wss_usage_MB": 'quantile_over_time(0.95,avg by ({env_key}namespace, deployment)(label_replace(container_memory_working_set_bytes{{env}container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$"))[{duration}:])/1024/1024',
-    # WSS内存使用率P95
-    "wss_usage_percent": 'quantile_over_time(0.95,avg by ({env_key}namespace, deployment)(label_replace(container_memory_working_set_bytes{{env}container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$"))[{duration}:])/max(max_over_time(label_replace(kube_pod_container_resource_limits{{env}resource="memory",unit="byte",container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")[{duration}:])) by ({env_key}namespace,deployment) *100 != Inf',
-    # CPU limit
-    "limit_core": 'max(max_over_time(label_replace(kube_pod_container_resource_limits{{env}resource="cpu", unit="core",container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")[{duration}:])) by ({env_key}namespace,deployment) *1000',
-    # 内存limit_MB
-    "limit_mem_MB": 'max(max_over_time(label_replace(kube_pod_container_resource_limits{{env}resource="memory",unit="byte",container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")[{duration}:])) by ({env_key}namespace,deployment)/1024/1024',
-    # CPU request
-    "request_core": 'max(max_over_time(label_replace(kube_pod_container_resource_requests{{env}resource="cpu", unit="core",container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")[{duration}:])) by ({env_key}namespace,deployment) * 1000',
-    # 内存request_MB
-    "request_mem_MB": 'max(max_over_time(label_replace(kube_pod_container_resource_requests{{env}resource="memory", unit="byte",container!="",container!="POD",namespace=~"{namespace}"},"deployment","$1","pod","^(.*)-[a-z0-9]+-[a-z0-9]+$")[{duration}:])) by ({env_key}deployment,namespace)/1024/1024',
-    # 查询节点的所有deployment列表
-    "deployments_by_node": 'kube_pod_info{{env}created_by_kind="ReplicaSet", namespace!~"{namespace}", node="{node}"}'
-}
 
 namespace_str_exclude = "loggie|kubedoor|kube-otel|cert-manager|kube-system|ops-monit"
 
@@ -181,112 +157,64 @@ def fetch_prom_envs():
         raise Exception(f"Error fetching data from Prometheus: {e}")
 
 
-def get_prom_data(promql, env_key, env_value, namespace_str, start_time_full, end_time_full, duration):
+def get_prom_data(promql, env_key, env_value, end_time_full, duration, workload_dict={}):
     """获取指标源数据"""
     url = get_prom_url()
-    if PROM_K8S_TAG_KEY:
-        k8s_filter = f'{PROM_K8S_TAG_KEY}=~"{env_value}",'
-        query = query_dict.get(promql).replace("{env}", k8s_filter).replace("{env_key}", f"{PROM_K8S_TAG_KEY},")
-    else:
-        query = query_dict.get(promql).replace("{env}", '').replace("{env_key}", '')
-    query = query.replace("{namespace}", namespace_str).replace("{duration}", duration)
-    # querystring = {"query":query,"start":start_time_full.timestamp(),"end":end_time_full.timestamp(),"step":"15"}
+    k8s_filter = f'{PROM_K8S_TAG_KEY}="{env_value}",'
+    query = (
+        query_dict.get(promql)
+        .replace("{env}", k8s_filter)
+        .replace("{env_key}", f"{PROM_K8S_TAG_KEY},")
+        .replace("{duration}", duration)
+    )
     querystring = {"query": query, "time": end_time_full.timestamp(), "step": "15"}
     logger.info(querystring)
     response = requests.request("GET", url, params=querystring).json()
     print(json.dumps(response), flush=True)
     if response.get("status") == "success":
         result = response["data"]["result"]
-        metrics_dict = {}
-        for x in result:
-            # for tv in x['values']:
-            #     if PROM_K8S_TAG_KEY:
-            #         k8s = x['metric'][PROM_K8S_TAG_KEY]
-            #     else:
-            #         k8s = "k8s"
-            #     ns = x['metric'].get('namespace',x['metric'].get('k8s_ns')) or x['metric'].get('namespace',x['metric'].get('destination_workload_namespace'))
-            #     ms = x['metric'].get('deployment')
-            #     if promql == "pod_num":
-            #         metrics_dict[f'{tv[0]}@{k8s}@{ns}@{ms}'] = int(tv[1])
-            #     else:
-            #         metrics_dict[f'{tv[0]}@{k8s}@{ns}@{ms}'] = float(tv[1])
-
-            if PROM_K8S_TAG_KEY:
+        if promql == "pod_num":
+            workload_dict = {}
+            for x in result:
                 k8s = x['metric'][PROM_K8S_TAG_KEY]
-            else:
-                k8s = "k8s"
-            ns = x['metric'].get('namespace', x['metric'].get('k8s_ns')) or x['metric'].get(
-                'namespace', x['metric'].get('destination_workload_namespace')
-            )
-            ms = x['metric'].get('deployment')
-            if promql == "pod_num":
-                metrics_dict[f'{x["value"][0]}@{k8s}@{ns}@{ms}'] = int(x['value'][1])
-            else:
-                metrics_dict[f'{x["value"][0]}@{k8s}@{ns}@{ms}'] = float(x['value'][1])
-        logger.info('单个指标数量 {}: {}', promql, len(metrics_dict))
-        return metrics_dict
+                ns = x['metric'].get('namespace')
+                dpm = x['metric'].get('workload')
+                replicaset = x['metric'].get('owner_name')
+                endtime = datetime.fromtimestamp(int(x["value"][0]))
+                workload_dict[f'{k8s}@{ns}@{replicaset}'] = [endtime, k8s, ns, dpm, int(x['value'][1])]
+            logger.info(f'处理指标{promql}完成: 服务数{len(workload_dict)}')
+        else:
+            workload_metrics_dict = {}
+            for x in result:
+                k8s = x['metric'][PROM_K8S_TAG_KEY]
+                ns = x['metric'].get('namespace')
+                replicaset = x['metric'].get('owner_name')
+                workload_metrics_dict[f'{k8s}@{ns}@{replicaset}'] = float(x['value'][1])
+
+            for k in workload_dict.keys():
+                if k in workload_metrics_dict:
+                    workload_dict[k].append(workload_metrics_dict[k])
+                else:
+                    workload_dict[k].append(-1)
+            logger.info(f'处理指标{promql}完成: 服务数{len(workload_dict)}, 指标数{len(workload_metrics_dict)}')
+        return workload_dict
     else:
         logger.error('ERROR {} {}', promql, env_key)
+        return {}
 
 
-
-def get_node_deployments(node, env_value):
-    logger.info(f"开始查询节点 {node} 上的所有deployment (env: {env_value})")
-    deployment_list = []
-    url = get_prom_url()
-    k8s_filter = f'{PROM_K8S_TAG_KEY}=~"{env_value}",'
-    query = query_dict.get('deployments_by_node').replace("{env}", k8s_filter).replace("{namespace}", namespace_str_exclude).replace("{node}", node)
-    querystring = {"query": query, "step": "15"}
-    logger.info(f"查询参数: {querystring}")
-    response = requests.request("GET", url, params=querystring).json()
-    print(json.dumps(response), flush=True)
-    if response.get("status") == "success":
-        result = response["data"]["result"]
-        logger.info(f"在节点 {node} 上找到 {len(result)} 个deployment")
-        for x in result:
-            ns = x['metric'].get('namespace', x['metric'].get('k8s_ns')) or x['metric'].get(
-                'namespace', x['metric'].get('destination_workload_namespace')
-            )
-            pod = x['metric'].get('pod')
-            deployment_list.append({
-                "namespace": ns,
-                "pod": pod
-            })
-        logger.info(f"节点 {node} 上的deployment列表: {json.dumps(deployment_list)}")
-        return deployment_list
-    else:
-        logger.error(f'查询节点 {node} 上的deployment列表失败')
-
-
-def merged_dict(env_key, env_value, namespace_str, duration_str, start_time_full, end_time_full):
+def merged_dict(env_key, env_value, duration_str, end_time_full):
     """解析指标源数据，处理成列表"""
-    metrics_list = []
-    metrics_keys_list = []
     k8s_metrics_list = []
-    for promql in query_list:
-        metrics_dict = get_prom_data(promql, env_key, env_value, namespace_str, start_time_full, end_time_full, duration_str)
-        metrics_keys_list = metrics_keys_list + list(metrics_dict.keys())
-        metrics_list.append(metrics_dict)
-    metrics_keys_list = list(set(metrics_keys_list))
-    new_metrics_list = []
-    for i in metrics_list:
-        for j in metrics_keys_list:
-            if j not in i:
-                i[j] = -1
-        logger.info('处理完成后（补全查不到的值）的数据行数: {}', len(i))
-        new_metrics_list.append(i)
+    workload_dict = get_prom_data("pod_num", env_key, env_value, end_time_full, duration_str)
 
-    merged_dict = defaultdict(list)
-    for d in new_metrics_list:
-        for k, v in d.items():
-            merged_dict[k].append(v)
-    for k, v in merged_dict.items():
-        key_list = k.split('@')
-        key_list[0] = datetime.fromtimestamp(int(key_list[0]))
-        if v[0] == -1:  # 如果未从指标查到pod数，则置为0
-            v[0] = 0
-        logger.info(key_list + v)
-        k8s_metrics_list.append(key_list + v + [-1, -1, -1])
+    for promql in query_list:
+        workload_dict = get_prom_data(promql, env_key, env_value, end_time_full, duration_str, workload_dict)
+
+    for v in workload_dict.values():
+        logger.debug(v)
+        k8s_metrics_list.append(v + [-1, -1, -1])
+
     return k8s_metrics_list
 
 
@@ -299,7 +227,7 @@ def metrics_to_ck(k8s_metrics_list):
         try:
             ckclient.execute("INSERT INTO k8s_resources VALUES", batch_data)
             logger.info(
-                f"🌊高峰期数据写入CK == count: insert batch {i//batch_size}",
+                f"🌊高峰期数据写入CK == count: 正在插入批次: {i//batch_size}",
                 "耗时：{:.2f}s".format(time.time() - begin),
             )
         except ServerException as e:
@@ -317,6 +245,41 @@ def merge_dicts(dict1, dict2):
         else:
             merged_dict[key] = value
     return merged_dict
+
+
+def get_node_deployments(node, env_value):
+    logger.info(f"开始查询节点 {node} 上的所有deployment (env: {env_value})")
+    deployment_list = []
+    url = get_prom_url()
+    k8s_filter = f'{PROM_K8S_TAG_KEY}="{env_value}",'
+    query = (
+        query_dict.get('deployments_by_node')
+        .replace("{env}", k8s_filter)
+        .replace("{namespace}", namespace_str_exclude)
+        .replace("{node}", node)
+    )
+    querystring = {"query": query, "step": "15"}
+    logger.info(f"查询参数: {querystring}")
+    response = requests.request("GET", url, params=querystring).json()
+    print(json.dumps(response), flush=True)
+    if response.get("status") == "success":
+        result = response["data"]["result"]
+        logger.info(f"在节点 {node} 上找到 {len(result)} 个deployment")
+        for x in result:
+            ns = x['metric'].get('namespace', x['metric'].get('k8s_ns')) or x['metric'].get(
+                'namespace', x['metric'].get('destination_workload_namespace')
+            )
+            deployment_list.append(
+                {
+                    "namespace": ns,
+                    "pod": x['metric'].get('pod'),
+                    "created_by_name": x['metric'].get('created_by_name'),
+                }
+            )
+        logger.info(f"节点 {node} 上的deployment列表: {json.dumps(deployment_list)}")
+        return deployment_list
+    else:
+        logger.error(f'查询节点 {node} 上的deployment列表失败')
 
 
 def ck_optimize():
@@ -348,7 +311,9 @@ def ck_agent_info():
     """从ck中读取agent的信息"""
     agent_info = {}
     try:
-        rows = ckclient.execute("SELECT env, collect, peak_hours, admission, admission_namespace, nms_not_confirm, scheduler FROM k8s_agent_status")
+        rows = ckclient.execute(
+            "SELECT env, collect, peak_hours, admission, admission_namespace, nms_not_confirm, scheduler FROM k8s_agent_status"
+        )
         if rows:
             for row in rows:
                 env = row[0]
@@ -428,7 +393,11 @@ def wecom(webhook, content, at=""):
 def dingding(webhook, content, at=""):
     webhook = 'https://oapi.dingtalk.com/robot/send?access_token=' + webhook
     headers = {'Content-Type': 'application/json'}
-    params = {"msgtype": "markdown", "markdown": {"title": "告警", "text": content}, "at": {"atMobiles": [at]}}
+    params = {
+        "msgtype": "markdown",
+        "markdown": {"title": "告警", "text": content},
+        "at": {"atMobiles": [at]},
+    }
     data = bytes(json.dumps(params), 'utf-8')
     response = requests.post(webhook, headers=headers, data=data)
     logger.info(f'【dingding】{response.json()}')
@@ -488,7 +457,7 @@ def get_list_from_resources(env_value):
     ckclient.disconnect()
     logger.info("提取最近10天cpu最高的一天的数据：")
     for i in result:
-        logger.info(i)
+        logger.debug(i)
     return result
 
 
@@ -548,7 +517,7 @@ def init_control_data(metrics_list_ck):
         try:
             ckclient.execute("INSERT INTO k8s_res_control VALUES", batch_data, types_check=True)
             logger.info(
-                f"== count: insert batch {i//batch_size}",
+                f"== count: 正在插入批次: {i//batch_size}",
                 "耗时：{:.2f}s".format(time.time() - begin),
             )
         except ServerException as e:
@@ -601,7 +570,9 @@ def update_control_data(metrics_list_ck):
                 ckclient.disconnect()
                 return False
         else:  # 添加
-            content = f"采集高峰期数据更新到管控表时，检测到新服务【{env}】【{namespace}】【{deployment}】,将新增到管控表。"
+            content = (
+                f"采集高峰期数据更新到管控表时，检测到新服务【{env}】【{namespace}】【{deployment}】,将新增到管控表。"
+            )
             logger.info(content)
             send_msg(content)
             tmp = ""
@@ -620,25 +591,27 @@ def get_deployment_from_control_data(deployment_list, num, type, env):
     """根据指定指标获取排名靠前的deployment"""
     logger.info(f"开始获取 {env} 环境中排名靠前的deployment，类型: {type}，数量限制: {num}")
     top_deployments = []
-    
+
     # 构造排序字段
     order_field = "request_cpu_m" if type == "cpu" else "request_mem_mb"
-    
+
     # 为每个deployment查询资源控制数据
     for index, deployment in enumerate(deployment_list):
         namespace = deployment.get('namespace')
         pod = deployment.get('pod')
         # 从pod名称提取deployment_name，去掉最后两个由-分隔的部分
         deployment_name = pod.rsplit('-', 2)[0] if pod else ""
-        logger.info(f"[{index+1}/{len(deployment_list)}] 查询deployment: {namespace}/{deployment_name}，原始Pod名称: {pod}")
-        
+        logger.info(
+            f"[{index+1}/{len(deployment_list)}] 查询deployment: {namespace}/{deployment_name}，原始Pod名称: {pod}"
+        )
+
         # 构建查询语句
         query = f"""
             SELECT deployment, namespace, request_cpu_m, request_mem_mb 
             FROM kubedoor.k8s_res_control 
             WHERE env = '{env}' AND deployment = '{deployment_name}' AND namespace = '{namespace}'
         """
-        
+
         try:
             # 执行查询
             result = ckclient.execute(query)
@@ -646,19 +619,21 @@ def get_deployment_from_control_data(deployment_list, num, type, env):
                 # 结果转为字典
                 deployment_data = {
                     'deployment': result[0][0],  # deployment
-                    'namespace': result[0][1],   # namespace
+                    'namespace': result[0][1],  # namespace
                     'request_cpu_m': result[0][2],  # CPU
-                    'request_mem_mb': result[0][3]  # 内存
+                    'request_mem_mb': result[0][3],  # 内存
                 }
-                logger.info(f"查询成功: {namespace}/{deployment_name}, CPU: {deployment_data['request_cpu_m']}m, 内存: {deployment_data['request_mem_mb']}MB")
+                logger.info(
+                    f"查询成功: {namespace}/{deployment_name}, CPU: {deployment_data['request_cpu_m']}m, 内存: {deployment_data['request_mem_mb']}MB"
+                )
                 top_deployments.append(deployment_data)
             else:
                 logger.warning(f"未找到 {namespace}/{deployment_name} 的资源管控数据")
         except Exception as e:
             logger.error(f"查询 deployment {deployment_name} 资源数据失败: {e}")
-    
+
     logger.info(f"查询完成，共找到 {len(top_deployments)} 个deployment的资源管控数据")
-    
+
     # 根据指定字段排序
     if top_deployments:
         top_deployments.sort(key=lambda x: x[order_field], reverse=True)
@@ -667,24 +642,31 @@ def get_deployment_from_control_data(deployment_list, num, type, env):
         for d in top_deployments:
             final_deploy_names.append(f"{d.get('namespace', 'unknown')}/{d.get('deployment', 'unknown')}")
         logger.info(f"最终返回 {len(top_deployments)} 个deployment: {json.dumps(final_deploy_names)}")
-        
+
         # 限制返回数量
         if num > 0 and len(top_deployments) > num:
             logger.info(f"限制返回前 {num} 个deployment")
             top_deployments = top_deployments[:num]
-    
+
     return top_deployments
 
 
-async def get_node_cpu_per(env_value):
-    query = f'(1 - avg(irate(node_cpu_seconds_total{{mode="idle",{PROM_K8S_TAG_KEY}="{env_value}"}}[2m])) by (instance,nodeAppType,origin_prometheus))*100'
+async def get_node_res_rank(env_value, res_type):
+    query = node_rank_query.get(res_type).replace("{env}", f'{PROM_K8S_TAG_KEY}="{env_value}",')
     try:
         logger.info(query)
         response = requests.get(get_prom_url(), params={'query': query})
         logger.info(get_prom_url())
         response.raise_for_status()
         data = response.json().get("data").get("result")
-        cpu_list = [{'name': i.get('metric').get('instance'), 'percent': float(i['value'][1])} for i in data if 'value' in i and len(i['value']) > 1]
+        cpu_list = [
+            {
+                'name': i.get('metric').get('instance', i.get('metric').get('node')),
+                'percent': round(float(i['value'][1]), 2),
+            }
+            for i in data
+            if 'value' in i and len(i['value']) > 1
+        ]
         logger.info(f'从prometheus查询节点cpu使用率{cpu_list}')
         cpu_list.sort(key=lambda x: x['percent'])
         logger.info(f'节点cpu使用率从小到大排序{cpu_list}')

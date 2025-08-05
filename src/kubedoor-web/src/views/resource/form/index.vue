@@ -199,13 +199,13 @@ defineExpose({ getRef });
 }
 
 .warning-box {
-  background-color: #fff9ed;
-  border-left: 4px solid #e6a23c;
   padding: 10px 15px;
   margin: 10px 0;
-  border-radius: 4px;
   font-size: 14px;
   color: #5f5f5f;
+  background-color: #fff9ed;
+  border-left: 4px solid #e6a23c;
+  border-radius: 4px;
 }
 
 .warning-box p {

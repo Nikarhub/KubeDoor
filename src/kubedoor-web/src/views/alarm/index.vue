@@ -5,8 +5,8 @@
       <div
         style="
           display: flex;
-          justify-content: space-between;
           align-items: flex-start;
+          justify-content: space-between;
         "
       >
         <el-form :inline="true" style="margin-bottom: -18px">
@@ -315,9 +315,9 @@ onUnmounted(() => {
 
 <style scoped>
 .search-section {
+  padding: 16px;
   margin-bottom: 20px;
   background-color: var(--el-bg-color);
-  padding: 16px;
   border-radius: 8px;
 }
 
@@ -330,32 +330,32 @@ onUnmounted(() => {
 }
 
 .stat-card {
-  background: linear-gradient(135deg, #ffffff 0%, #f5f7fa 100%);
-  border-radius: 12px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.05);
-  transition: all 0.3s ease;
-  height: 100%;
   position: relative;
+  height: 100%;
+  padding: 16px;
   overflow: hidden;
   cursor: pointer;
-  padding: 16px;
+  background: linear-gradient(135deg, #fff 0%, #f5f7fa 100%);
+  border-radius: 12px;
+  box-shadow: 0 4px 20px rgb(0 0 0 / 5%);
+  transition: all 0.3s ease;
 }
 
 .stat-card::before {
-  content: "";
   position: absolute;
   top: 0;
   left: 0;
   width: 100%;
   height: 4px;
+  content: "";
   background: linear-gradient(90deg, #409eff, #67c23a);
   opacity: 0.8;
   transition: opacity 0.3s ease;
 }
 
 .stat-card:hover {
+  box-shadow: 0 8px 24px rgb(0 0 0 / 12%);
   transform: translateY(-5px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
 }
 
 .stat-card:hover::before {
@@ -363,8 +363,8 @@ onUnmounted(() => {
 }
 
 .stat-card:active {
+  box-shadow: 0 4px 12px rgb(0 0 0 / 8%);
   transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
 }
 
 .card-content {
@@ -379,17 +379,17 @@ onUnmounted(() => {
 
 .stat-title-row {
   display: flex;
-  align-items: center;
   gap: 8px;
+  align-items: center;
   margin-bottom: 8px;
 }
 
 .stat-label {
   flex: 1;
   overflow: hidden;
+  font-weight: 600;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-weight: 600;
 }
 
 .stat-body {
@@ -405,19 +405,19 @@ onUnmounted(() => {
 }
 
 .stat-value {
+  margin-right: 4px;
   font-size: 24px;
   font-weight: 600;
-  margin-right: 4px;
   color: var(--el-color-primary);
 
   &.firing {
-    color: var(--el-color-danger);
     font-size: 20px;
+    color: var(--el-color-danger);
   }
 
   &.info {
-    color: var(--el-color-info);
     font-size: 20px;
+    color: var(--el-color-info);
   }
 }
 
@@ -427,10 +427,10 @@ onUnmounted(() => {
 }
 
 .stat-separator {
-  font-size: 20px;
-  color: var(--el-text-color-secondary);
   margin: 0 4px;
+  font-size: 20px;
   line-height: 1;
+  color: var(--el-text-color-secondary);
 }
 
 .statistics-cards .el-col {

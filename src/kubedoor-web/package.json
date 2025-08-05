@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "NODE_OPTIONS=--max-old-space-size=4096 vite",
+    "dev": "vite",
     "serve": "pnpm dev",
     "build": "rimraf dist && NODE_OPTIONS=--max-old-space-size=8192 vite build",
     "build:staging": "rimraf dist && vite build --mode staging",
@@ -54,6 +54,7 @@
     "@vueuse/core": "^10.11.1",
     "@vueuse/motion": "^2.2.3",
     "animate.css": "^4.1.1",
+    "ansi_up": "^6.0.6",
     "axios": "^1.7.4",
     "dayjs": "^1.11.12",
     "echarts": "^5.5.1",

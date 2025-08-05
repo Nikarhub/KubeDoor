@@ -4,7 +4,7 @@ FROM registry.cn-shenzhen.aliyuncs.com/starsl/python:3.11-alpine
 WORKDIR /app
 
 # 拷贝 Python 脚本到容器中
-COPY utils.py kubedoor-agent.py pod-mgr.py version requirements.txt /app/
+COPY *.py version requirements.txt /app/
 
 COPY tls.crt tls.key /serving-certs/
 
