@@ -2,7 +2,7 @@
 
 ## 介绍
 
-node版本 >= "^18.18.0 || ^20.9.0 || >=21.1.0"
+node版本 >= "^18.18.0 || ^20.9.0 || >=22.0.0"
 
 ## 命令
 
@@ -20,5 +20,6 @@ pnpm prettier --write .\src\views\monit\index.vue
 # 启动
 pnpm dev
 # 打包
+pnpm build
 npm run build
 ```

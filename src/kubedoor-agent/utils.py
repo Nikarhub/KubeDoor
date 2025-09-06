@@ -42,6 +42,8 @@ def send_msg(content):
         response = dingding(MSG_TOKEN, content)
     elif MSG_TYPE == "feishu":
         response = feishu(MSG_TOKEN, content)
+    elif MSG_TYPE == "slack":
+        response = slack(MSG_TOKEN, content)
     else:
         logger.warning(f"不支持的消息类型：{MSG_TYPE}")
         return f"不支持的消息类型：{MSG_TYPE}"
@@ -86,6 +88,25 @@ def feishu(webhook, content, at=""):
     }
     data = json.dumps(params)
     response = requests.post(webhook, headers=headers, data=data)
+    return response.json()
+
+
+def slack(webhook, content, at=""):
+    """发送Slack告警通知"""
+    # 构建完整的Slack Webhook URL
+    webhook_url = f'https://hooks.slack.com/services/{webhook}'
+    headers = {'Content-Type': 'application/json'}
+
+    # 构建消息内容，如果有@用户则添加
+    message_text = content
+    if at:
+        message_text += f" <@{at}>"
+
+    params = {"text": message_text}
+
+    data = json.dumps(params)
+    response = requests.post(webhook_url, headers=headers, data=data)
+    logger.info(f'【slack】{response.json()}')
     return response.json()
 
 

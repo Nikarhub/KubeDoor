@@ -7,9 +7,7 @@ import pytz
 import logging
 import hashlib
 
-logging.basicConfig(
-    level=getattr(logging, utils.LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s'
-)
+logging.basicConfig(level=getattr(logging, utils.LOG_LEVEL), format='%(asctime)s - %(levelname)s - %(message)s')
 pool = ChPool(
     host=utils.CK_HOST,
     port=utils.CK_PORT,
@@ -33,7 +31,7 @@ def wecom(webhook, content, at):
     params = {'msgtype': 'markdown', 'markdown': {'content': f"{content}<@{at}>"}}
     data = bytes(json.dumps(params), 'utf-8')
     response = requests.post(webhook, headers=headers, data=data)
-    print(f'【wecom】{response.json()}', flush=True)
+    logging.info(f'【wecom】{response.json()}')
 
 
 def dingding(webhook, content, at):
@@ -46,7 +44,7 @@ def dingding(webhook, content, at):
     }
     data = bytes(json.dumps(params), 'utf-8')
     response = requests.post(webhook, headers=headers, data=data)
-    print(f'【dingding】{response.json()}', flush=True)
+    logging.info(f'【dingding】{response.json()}')
 
 
 def feishu(webhook, content, at):
@@ -67,7 +65,25 @@ def feishu(webhook, content, at):
     }
     data = json.dumps(params)
     response = requests.post(webhook, headers=headers, data=data)
-    print(f'【feishu】{response.json()}')
+    logging.info(f'【feishu】{response.json()}')
+
+
+def slack(webhook, content, at=""):
+    """发送Slack告警通知"""
+    # 构建完整的Slack Webhook URL
+    webhook_url = f'https://hooks.slack.com/services/{webhook}'
+    headers = {'Content-Type': 'application/json'}
+
+    # 构建消息内容，如果有@用户则添加
+    message_text = content
+    if at:
+        message_text += f" <@{at}>"
+
+    params = {"text": message_text}
+
+    data = json.dumps(params)
+    response = requests.post(webhook_url, headers=headers, data=data)
+    logging.info(f'【slack】{response.json()}')
 
 
 def parse_alert_time(time_str):
@@ -103,12 +119,7 @@ def extract_container_from_pod(pod_name):
             # 检查最后一部分是否像hash（5-10位字母数字）
             if len(parts[-1]) >= 5 and len(parts[-1]) <= 10 and parts[-1].isalnum():
                 # 检查倒数第二部分是否也像hash
-                if (
-                    len(parts) >= 3
-                    and len(parts[-2]) >= 5
-                    and len(parts[-2]) <= 10
-                    and parts[-2].isalnum()
-                ):
+                if len(parts) >= 3 and len(parts[-2]) >= 5 and len(parts[-2]) <= 10 and parts[-2].isalnum():
                     return '-'.join(parts[:-2])
                 else:
                     return '-'.join(parts[:-1])
@@ -310,9 +321,7 @@ def handle_custom_alert():
         valid_severities = ['Critical', 'Info', 'Notice', 'Warning']
         if data['severity'] not in valid_severities:
             return (
-                jsonify(
-                    {'status': 'error', 'message': f'severity必须是以下值之一: {valid_severities}'}
-                ),
+                jsonify({'status': 'error', 'message': f'severity必须是以下值之一: {valid_severities}'}),
                 400,
             )
 
@@ -381,9 +390,9 @@ def handle_custom_alert():
 @app.route("/msg/<token>", methods=['POST'])
 def alertnode(token):
     req = request.get_json()
-    print('↓↓↓↓↓↓↓↓↓↓↓↓↓↓node↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓', flush=True)
-    print(json.dumps(req, indent=2, ensure_ascii=False), flush=True)
-    print('↑↑↑↑↑↑↑↑↑↑↑↑↑↑node↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑', flush=True)
+    logging.info('↓↓↓↓↓↓↓↓↓↓↓↓↓↓node↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓')
+    logging.info(json.dumps(req, indent=2, ensure_ascii=False))
+    logging.info('↑↑↑↑↑↑↑↑↑↑↑↑↑↑node↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑↑')
     now_utc = datetime.now(UTC).replace(tzinfo=None)
     now_cn = datetime.now()
 

@@ -184,3 +184,41 @@ sum by (node) (
 )/1024/1024/1024
 ''',
 }
+
+# 获取deployment的image列表
+
+deployment_image = {
+    "promql": '''
+group by ({env_key} namespace, owner_name, image_spec, image) (
+    label_replace(
+        kube_pod_container_info{{env} namespace="{namespace}", container_id!=""}
+      * on ({env_key} namespace, pod) group_left (owner_name)
+        kube_pod_owner{{env} namespace="{namespace}",owner_kind="ReplicaSet",owner_is_controller="true"},
+      "replicaset",
+      "$1",
+      "owner_name",
+      "(.*)"
+    )
+  * on ({env_key} namespace, replicaset) group_left (owner_name)
+    kube_replicaset_owner{{env} namespace="{namespace}",owner_kind="Deployment",owner_name="{deployment}"}
+)
+'''
+}
+
+deployment_image_min = {
+    "promql": '''
+group by ({env_key} namespace, owner_name, image_spec, image) (
+    label_replace(
+        bottomk(1,count_over_time(kube_pod_container_info{{env} namespace="{namespace}", container_id!=""}[10m]))
+      * on ({env_key} namespace, pod) group_left (owner_name)
+        kube_pod_owner{{env} namespace="{namespace}",owner_kind="ReplicaSet",owner_is_controller="true"},
+      "replicaset",
+      "$1",
+      "owner_name",
+      "(.*)"
+    )
+  * on ({env_key} namespace, replicaset) group_left (owner_name)
+    kube_replicaset_owner{{env} namespace="{namespace}",owner_kind="Deployment",owner_name="{deployment}"}
+)
+'''
+}

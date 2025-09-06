@@ -1,10 +1,7 @@
 <template>
   <div class="alarm-detail-container">
     <!-- 顶部区域 -->
-    <div
-      class="top-section mb-2"
-      style="padding: 16px; background-color: #fff; border-radius: 8px"
-    >
+    <div class="top-section mb-2" style="padding: 16px; border-radius: 8px">
       <!-- 搜索栏 -->
       <div>
         <el-form :model="searchForm" style="margin-bottom: -18px">
@@ -22,8 +19,9 @@
                   @change="handleTimeRangeChange"
                 >
                   <el-option label="今天" :value="0" />
-                  <el-option label="最近1天" :value="1" />
+                  <el-option label="昨天" :value="1" />
                   <el-option label="最近3天" :value="3" />
+                  <el-option label="最近5天" :value="5" />
                   <el-option label="最近7天" :value="7" />
                   <el-option label="最近15天" :value="15" />
                   <el-option label="最近30天" :value="30" />
@@ -151,9 +149,9 @@
                   "
                   placement="top"
                 >
-                  <el-button-group style="margin-right: 8px">
-                    <el-button type="primary" @click="handleSearch">
-                      <el-icon style="margin-right: 4px">
+                  <el-button-group style="margin-right: 15px">
+                    <el-button plain type="primary" @click="handleSearch">
+                      <el-icon style="margin-right: 1px">
                         <RefreshRight />
                       </el-icon>
                       刷新
@@ -162,13 +160,13 @@
                       trigger="click"
                       @command="handleRefreshIntervalChange"
                     >
-                      <el-button type="primary">
+                      <el-button plain type="primary">
                         {{
                           autoRefreshInterval === 0
                             ? ""
                             : autoRefreshInterval + "s"
                         }}
-                        <el-icon style="margin-left: 4px">
+                        <el-icon style="margin-left: 1px">
                           <ArrowDown />
                         </el-icon>
                       </el-button>
@@ -185,7 +183,9 @@
                     </el-dropdown>
                   </el-button-group></el-tooltip
                 >
-                <el-button @click="handleReset">重置</el-button>
+                <el-button plain type="primary" @click="handleReset"
+                  >重置</el-button
+                >
               </el-form-item>
             </el-col>
           </el-row>
@@ -540,11 +540,15 @@ const fetchTotal = async () => {
 
 // 根据timeRange获取startTime
 const getStartTime = (timeRange: number) => {
-  const now = dayjs();
+  let startTime;
   if (timeRange === 0) {
-    return now.startOf("day").format("YYYY-MM-DD HH:mm:ss");
+    // 今天的0点
+    startTime = dayjs().startOf("day");
+  } else {
+    // 前n天的0点
+    startTime = dayjs().subtract(timeRange, "day").startOf("day");
   }
-  return now.subtract(timeRange, "day").format("YYYY-MM-DD HH:mm:ss");
+  return startTime.format("YYYY-MM-DD HH:mm:ss");
 };
 
 // 获取详情数据
@@ -657,10 +661,8 @@ const handleSortChange = ({
 const handleReset = () => {
   searchForm.value = {
     timeRange: route.query.timeRange ? Number(route.query.timeRange) : 0,
-    env: searchStore.env ? [searchStore.env] : [],
-    alertName: (route.query.alertName as string)
-      ? [route.query.alertName as string]
-      : [],
+    env: [],
+    alertName: [],
     status: ["firing"],
     severity: [],
     operate: undefined,

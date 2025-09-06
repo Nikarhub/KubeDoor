@@ -11,7 +11,10 @@ from loguru import logger
 import utils
 import configmap_manager
 import service_manager
+import istio_manager
 import re
+from deployment_monitor import DeploymentMonitor
+from k8s_event_monitor import K8sEventMonitor
 
 # 配置日志
 logger.remove()
@@ -29,6 +32,8 @@ batch_v1 = None  # BatchV1Api
 core_v1 = None  # CoreV1Api
 admission_api = None  # AdmissionregistrationV1Api
 custom_api = None  # CustomObjectsApi（用于访问Metrics API）
+deployment_monitor = None  # DeploymentMonitor实例
+event_monitor = None  # K8sEventMonitor实例
 # 用于存储 WebSocket 请求的 Future
 request_futures = {}
 # 存储Pod日志流任务
@@ -37,7 +42,7 @@ pod_logs_tasks = {}
 
 def init_kubernetes():
     """在程序启动时加载 Kubernetes 配置并初始化客户端"""
-    global v1, batch_v1, core_v1, admission_api, custom_api
+    global v1, batch_v1, core_v1, admission_api, custom_api, deployment_monitor, event_monitor
     try:
         config.load_incluster_config()
         v1 = client.AppsV1Api()
@@ -45,6 +50,8 @@ def init_kubernetes():
         core_v1 = client.CoreV1Api()
         admission_api = client.AdmissionregistrationV1Api()
         custom_api = client.CustomObjectsApi()
+        deployment_monitor = DeploymentMonitor(v1, core_v1)
+        event_monitor = K8sEventMonitor(core_v1)
         logger.info("Kubernetes 配置加载成功")
     except Exception as e:
         logger.error(f"加载 Kubernetes 配置失败: {e}")
@@ -195,7 +202,16 @@ async def connect_to_server():
                     logger.info("成功连接到服务端")
                     global ws_conn
                     ws_conn = ws
-                    await asyncio.gather(process_request(ws), heartbeat(ws))
+                    
+                    # 设置事件监听器的WebSocket连接
+                    event_monitor.set_websocket_connection(ws)
+                    
+                    # 并发运行请求处理、心跳发送和事件监听
+                    await asyncio.gather(
+                        process_request(ws), 
+                        heartbeat(ws),
+                        event_monitor.start_monitoring()
+                    )
         except Exception as e:
             logger.error(f"连接到服务端失败：{e}")
             logger.info("等待 5 秒后重新连接...")
@@ -233,9 +249,11 @@ async def update_image(request):
         deployment.spec.template.spec.containers[0].image = new_image
 
         await v1.patch_namespaced_deployment(name=deployment_name, namespace=namespace, body=deployment)
-        utils.send_msg(
-            f"【{utils.PROM_K8S_TAG_VALUE}】【{namespace}】【{deployment_name}】更新镜像【{new_image_tag}】成功。"
-        )
+
+        # 启动后台监控任务
+        if deployment_monitor:
+            asyncio.create_task(deployment_monitor.monitor_deployment_update(namespace, deployment_name, new_image))
+
         return web.json_response(
             {
                 "success": True,
@@ -765,9 +783,6 @@ async def get_deployment_pods(request):
     namespace = request.query.get("namespace")
     deployment_name = request.query.get("deployment")
 
-    if not namespace or not deployment_name:
-        return web.json_response({"message": "命名空间和部署名称参数不能为空", "success": False}, status=400)
-
     try:
         # 获取指定Deployment的标签选择器
         deployment = await v1.read_namespaced_deployment(deployment_name, namespace)
@@ -794,7 +809,11 @@ async def get_deployment_pods(request):
                 # if any(img in deployment_images for img in pod_images):
 
         # 合并 pod，去重
-        all_related_pods = {pod.metadata.name: pod for pod in pods_by_label.items}
+        all_related_pods = {
+            pod.metadata.name: pod
+            for pod in pods_by_label.items
+            if pod.metadata.name.startswith(deployment_name + '-') and pod.metadata.name.count("-") == lenmline
+        }
         for pod in pods_by_match:
             all_related_pods[pod.metadata.name] = pod
 
@@ -1690,18 +1709,31 @@ async def setup_routes(app):
     app.router.add_get('/api/nodes', get_nodes_info)
     app.router.add_post('/api/balance_node', balance_node)
     # ConfigMap管理接口
-    app.router.add_get('/api/configmaps', lambda request: configmap_manager.get_configmap_list(core_v1, request))
-    app.router.add_get('/api/configmap/get', lambda request: configmap_manager.get_configmap_content(core_v1, request))
+    app.router.add_get('/api/agent/configmaps', lambda request: configmap_manager.get_configmap_list(core_v1, request))
+    app.router.add_get(
+        '/api/agent/configmap/get', lambda request: configmap_manager.get_configmap_content(core_v1, request)
+    )
     app.router.add_post(
-        '/api/configmap/update', lambda request: configmap_manager.update_configmap_content(core_v1, request)
+        '/api/agent/configmap/update', lambda request: configmap_manager.update_configmap_content(core_v1, request)
     )
     # Service管理接口
-    app.router.add_get('/api/services', lambda request: service_manager.get_service_list(core_v1, request))
-    app.router.add_get('/api/service/get', lambda request: service_manager.get_service_content(core_v1, request))
-    app.router.add_post('/api/service/update', lambda request: service_manager.update_service_content(core_v1, request))
-    app.router.add_get(
-        '/api/service/endpoints', lambda request: service_manager.get_service_endpoints(core_v1, request)
+    app.router.add_get('/api/agent/services', lambda request: service_manager.get_service_list(core_v1, request))
+    app.router.add_get('/api/agent/service/get', lambda request: service_manager.get_service_content(core_v1, request))
+    app.router.add_post(
+        '/api/agent/service/update', lambda request: service_manager.update_service_content(core_v1, request)
     )
+    app.router.add_get(
+        '/api/agent/service/endpoints', lambda request: service_manager.get_service_endpoints(core_v1, request)
+    )
+    app.router.add_get(
+        '/api/agent/service/first-port', lambda request: service_manager.get_service_first_port(core_v1, request)
+    )
+    # VirtualService管理接口
+    app.router.add_get('/api/agent/istio/vs', lambda request: istio_manager.get_virtualservice(custom_api, request))
+    app.router.add_post(
+        '/api/agent/istio/vs/apply', lambda request: istio_manager.apply_virtualservice(custom_api, request)
+    )
+    # app.router.add_delete('/api/agent/istio/vs/delete', lambda request: istio_manager.delete_virtualservice(custom_api, request))
 
 
 async def start_https_server():

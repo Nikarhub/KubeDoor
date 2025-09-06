@@ -9,12 +9,36 @@ from aiohttp import web, WSMsgType
 from loguru import logger
 import utils, prom_real_time_data
 from multidict import MultiDict
+from istio_route import istio_route
+import image_tags_fetcher
+from k8s_event import process_k8s_event_async, init_clickhouse_tables
+from k8s_event.event_query_api import query_k8s_events_handler, get_k8s_events_menu_options
 
 logger.remove()
+
+
+# 自定义格式化函数，将WARNING显示为WARN
+def custom_formatter(record):
+    level_name = record["level"].name
+    if level_name == "WARNING":
+        level_name = "WARN"
+
+    # 替换原始的level为自定义的level_name
+    custom_record = record.copy()
+    custom_record["level"] = type('Level', (), {'name': level_name, 'no': record["level"].no})()
+
+    return (
+        '<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [<level>'
+        + level_name
+        + '</level>] <level>{message}</level>\n{exception}'
+    )
+
+
 logger.add(
     sys.stderr,
-    format='<green>{time:YYYY-MM-DD HH:mm:ss.SSS}</green> [<level>{level}</level>] <level>{message}</level>',
+    format=custom_formatter,
     level='INFO',
+    colorize=True,  # 启用颜色输出
 )
 
 
@@ -30,9 +54,9 @@ async def forward_request(request):
 
         permission = request.headers.get('X-User-Permission', '')
         if permission == 'read' and not data.strip().lower().startswith('select'):
-            return web.Response(status=403)
+            return web.json_response({"error": "权限不足，只能执行SELECT查询"}, status=403)
         if not data.strip().lower().startswith(('select', 'alter', 'insert')):
-            return web.Response(status=403)
+            return web.json_response({"error": "不支持的SQL操作"}, status=403)
         data = data.replace('__KUBEDOORDB__', utils.CK_DATABASE)
         logger.info(f'📐{data}')
 
@@ -40,7 +64,7 @@ async def forward_request(request):
             utils.ck_alter(data)
             utils.ck_optimize()
             logger.info("SQL: 数据更新")
-            return web.json_response({"msg": "SQL: 数据更新完成"})
+            return web.json_response({"success": True, "msg": "SQL: 数据更新完成"})
         else:
             TARGET_URL = (
                 f'http://{utils.CK_HOST}:{utils.CK_HTTP_PORT}/?add_http_cors_header=1&default_format=JSONCompact'
@@ -58,7 +82,7 @@ async def forward_request(request):
                     else:
                         text = await response.text()
                         response_data = {"msg": text}
-                    return web.json_response(response_data)
+                    return web.json_response({"success": True, **response_data})
     except Exception as e:
         logger.error(f"Error in forward_request: {e}")
         return web.json_response({"error": str(e)}, status=500)
@@ -73,9 +97,9 @@ async def websocket_handler(request):
     env = request.query.get("env")
     ver = request.query.get("ver", "unknown")
     if not env:
-        return web.Response(text="缺少 env 参数", status=400)
+        return web.json_response({"error": "缺少 env 参数"}, status=400)
     if env in clients and clients[env]["online"]:
-        return web.Response(text="目标客户端已在线", status=409)
+        return web.json_response({"error": "目标客户端已在线"}, status=409)
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -119,7 +143,7 @@ async def websocket_handler(request):
                         if "response_queue" in clients[env]:
                             clients[env]["response_queue"][request_id] = response
                         logger.info(f"[响应]客户端 env={env}: request_id={request_id}：{response}")
-                    
+
                     elif data.get("type") == "pod_logs":
                         # 处理来自agent的Pod日志数据，转发给前端
                         connection_id = data.get("connection_id")
@@ -132,9 +156,22 @@ async def websocket_handler(request):
                                 # 清理断开的连接
                                 if connection_id in pod_logs_connections:
                                     del pod_logs_connections[connection_id]
+                    elif data.get("type") == "k8s_event":
+                        # 处理来自agent的K8S事件消息
+                        logger.info(f"💯[K8S事件]客户端 env={env}: {data}")
+
+                        # 异步存储K8S事件到ClickHouse，避免阻塞WebSocket消息循环
+                        try:
+                            success = await process_k8s_event_async(data)
+                            if success:
+                                logger.debug(f"K8S事件已成功存储到ClickHouse: {data.get('data', {}).get('eventUid')}")
+                            else:
+                                logger.warning(f"K8S事件存储失败: {data.get('data', {}).get('eventUid')}")
+                        except Exception as e:
+                            logger.error(f"处理K8S事件时发生错误: {e}")
                     else:
                         logger.info(f"收到客户端消息：{msg.data}")
-                        
+
                 except json.JSONDecodeError:
                     # 如果不是JSON格式，可能是纯文本日志消息
                     # 需要根据当前活跃的日志连接来转发消息
@@ -150,7 +187,7 @@ async def websocket_handler(request):
                                     # 清理断开的连接
                                     if connection_id in pod_logs_connections:
                                         del pod_logs_connections[connection_id]
-                        
+
             elif msg.type == WSMsgType.ERROR:
                 logger.error(f"客户端连接出错，env={env}")
     except Exception as e:
@@ -170,30 +207,30 @@ async def pod_logs_websocket_handler(request):
     namespace = request.query.get("namespace")
     pod_name = request.query.get("pod_name")
     container = request.query.get("container", "")
-    
+
     if not all([env, namespace, pod_name]):
-        return web.Response(text="缺少必要参数", status=400)
-    
+        return web.json_response({"error": "缺少必要参数"}, status=400)
+
     if env not in clients or not clients[env]["online"]:
-        return web.Response(text="目标环境不在线", status=404)
-    
+        return web.json_response({"error": "目标环境不在线"}, status=404)
+
     ws = web.WebSocketResponse()
     await ws.prepare(request)
-    
+
     # 生成唯一连接ID
     connection_id = f"{env}_{namespace}_{pod_name}_{int(time.time())}"
-    
+
     # 存储前端连接
     pod_logs_connections[connection_id] = {
         "ws": ws,
         "env": env,
         "namespace": namespace,
         "pod_name": pod_name,
-        "container": container
+        "container": container,
     }
-    
+
     logger.info(f"Pod日志连接建立: {connection_id}")
-    
+
     try:
         # 向agent发送开始日志流请求
         agent_ws = clients[env]["ws"]
@@ -202,10 +239,10 @@ async def pod_logs_websocket_handler(request):
             "connection_id": connection_id,
             "namespace": namespace,
             "pod_name": pod_name,
-            "container": container
+            "container": container,
         }
         await agent_ws.send_json(start_message)
-        
+
         # 处理前端消息
         async for msg in ws:
             if msg.type == WSMsgType.TEXT:
@@ -213,10 +250,7 @@ async def pod_logs_websocket_handler(request):
                     data = json.loads(msg.data)
                     if data.get("type") == "stop_logs":
                         # 通知agent停止日志流
-                        stop_message = {
-                            "type": "stop_pod_logs",
-                            "connection_id": connection_id
-                        }
+                        stop_message = {"type": "stop_pod_logs", "connection_id": connection_id}
                         await agent_ws.send_json(stop_message)
                         break
                 except json.JSONDecodeError:
@@ -230,20 +264,17 @@ async def pod_logs_websocket_handler(request):
         # 清理连接
         if connection_id in pod_logs_connections:
             del pod_logs_connections[connection_id]
-        
+
         # 通知agent停止日志流
         try:
             if env in clients and clients[env]["online"]:
-                stop_message = {
-                    "type": "stop_pod_logs",
-                    "connection_id": connection_id
-                }
+                stop_message = {"type": "stop_pod_logs", "connection_id": connection_id}
                 await clients[env]["ws"].send_json(stop_message)
         except Exception as e:
             logger.error(f"通知agent停止日志流失败: {e}")
-        
+
         logger.info(f"Pod日志连接关闭: {connection_id}")
-    
+
     return ws
 
 
@@ -257,14 +288,90 @@ async def http_handler(request):
     except:
         body = False
     if not env:
-        return web.Response(text="缺少 env 参数", status=400)
+        return web.json_response({"error": "缺少 K8S 集群名称参数"}, status=400)
 
     if env not in clients or not clients[env]["online"]:
-        return web.Response(text="目标客户端不在线", status=404)
+        return web.json_response({"error": "目标客户端不在线"}, status=404)
+
+    logger.info(path)
+    if path == "/api/agent/istio/vs/apply":
+        body = await istio_route.generate_json_handler(request)
+    elif path == "/api/update-image":
+        username = request.headers.get('X-User-Name', '').lower()
+        permission = request.headers.get('X-User-Permission', '')
+        logger.info(f"🚧username={username}, permission={permission}: {body}")
+        # 如果权限是rw，则跳过所有权限检查
+        if permission == "rw":
+            pass  # 直接跳过所有权限检查，继续执行后续逻辑
+        else:
+            # UPDATE_IMAGE权限检查
+            if not hasattr(utils, 'UPDATE_IMAGE') or not utils.UPDATE_IMAGE:
+                return web.json_response({"error": "拒绝操作：没有UPDATE_IMAGE权限配置"}, status=403)
+            try:
+                # 解析UPDATE_IMAGE JSON字符串
+                update_image_config = json.loads(utils.UPDATE_IMAGE)
+            except json.JSONDecodeError:
+                return web.json_response({"error": "拒绝操作：UPDATE_IMAGE配置格式错误"}, status=403)
+
+            # 获取环境相关配置
+            if env not in update_image_config:
+                if "default" not in update_image_config:
+                    return web.json_response({"error": "拒绝操作：找不到default配置"}, status=403)
+                upimage_dict = update_image_config["default"]
+            else:
+                upimage_dict = update_image_config[env]
+
+            # 检查isOperationAllowed
+            if "isOperationAllowed" not in upimage_dict:
+                return web.json_response({"error": "拒绝操作：找不到isOperationAllowed配置"}, status=403)
+
+            if not upimage_dict["isOperationAllowed"]:
+                return web.json_response({"error": f"拒绝操作：当前{env}环境禁止操作"}, status=403)
+
+            # 检查allowedOperationPeriod时间段
+            if "allowedOperationPeriod" not in upimage_dict:
+                return web.json_response({"error": "拒绝操作：找不到allowedOperationPeriod配置"}, status=403)
+
+            allowed_period = upimage_dict["allowedOperationPeriod"]
+            try:
+                start_time_str, end_time_str = allowed_period.split('-')
+                start_hour, start_minute = map(int, start_time_str.split(':'))
+                end_hour, end_minute = map(int, end_time_str.split(':'))
+
+                current_time = datetime.now()
+                current_hour = current_time.hour
+                current_minute = current_time.minute
+                current_total_minutes = current_hour * 60 + current_minute
+
+                start_total_minutes = start_hour * 60 + start_minute
+                end_total_minutes = end_hour * 60 + end_minute
+
+                # 处理跨天的情况（如19:00-08:00）
+                if start_total_minutes > end_total_minutes:
+                    # 跨天情况：当前时间应该在start_time之后或end_time之前（开始时间可以等于，结束时间不能等于）
+                    if not (current_total_minutes >= start_total_minutes or current_total_minutes < end_total_minutes):
+                        return web.json_response(
+                            {"error": f"拒绝操作：当前{env}环境只允许在{allowed_period}时段操作"}, status=403
+                        )
+                else:
+                    # 同一天情况：当前时间应该在start_time和end_time之间（开始时间可以等于，结束时间不能等于）
+                    if not (start_total_minutes <= current_total_minutes < end_total_minutes):
+                        return web.json_response(
+                            {"error": f"拒绝操作：当前{env}环境只允许在{allowed_period}时段操作"}, status=403
+                        )
+            except (ValueError, IndexError):
+                return web.json_response({"error": "拒绝操作：allowedOperationPeriod格式错误"}, status=403)
+
+            # 检查用户权限
+            if "user" not in upimage_dict:
+                return web.json_response({"error": "拒绝操作：找不到user配置"}, status=403)
+
+            user_list = upimage_dict["user"]
+            if username not in user_list:
+                return web.json_response({"error": f"拒绝操作：当前用户{username}禁止操作"}, status=403)
 
     # 扩缩容接口要查询节点cpu使用率并传给agent
-    logger.info(path)
-    if query_params.get("add_label") == 'true':
+    elif path in ["/api/scale", "/api/pod/modify_pod"] and query_params.get("add_label") == 'true':
         res_type = query_params.get("type", "cpu")
         node_cpu_list = await utils.get_node_res_rank(query_params.get("env"), res_type)
         if path == "/api/scale":
@@ -273,7 +380,7 @@ async def http_handler(request):
             body = node_cpu_list
 
     # 固定节点均衡模式，增加节点微调能力
-    if path == "/api/balance_node":
+    elif path == "/api/balance_node":
         source = body.get('source')
         target = body.get('target')
         num = body.get('num')
@@ -318,12 +425,20 @@ async def http_handler(request):
         for _ in range(120 * 10):  # 等待 120 秒，检查响应队列
             if request_id in clients[env]["response_queue"]:
                 response = clients[env]["response_queue"].pop(request_id)
-                return web.json_response(response)
+
+                # 特殊处理：如果是 /api/agent/istio/vs 接口，需要对响应进行额外处理
+                if path == "/api/agent/istio/vs":
+                    # 在这里添加你的额外处理逻辑
+                    vs_list = response.get('data', [])
+                    processed_response = await istio_route.sync_vs_from_k8s(env, vs_list)
+                    return web.json_response(processed_response)
+
+                return web.json_response({"success": True, **response})
             await asyncio.sleep(0.1)
     except Exception as e:
         logger.error(f"等待客户端响应时发生错误，env={env}, 错误：{e}")
 
-    return web.Response(text="客户端未响应", status=504)
+    return web.json_response({"error": "客户端未响应"}, status=504)
 
 
 async def status_handler(request):
@@ -337,7 +452,7 @@ async def status_handler(request):
         for env, data in clients.items()
     }
     agents = utils.merge_dicts(agents_status, agent_info)
-    return web.json_response({'data': agents})
+    return web.json_response({'success': True, 'data': agents})
 
 
 async def prom_query_handler(request):
@@ -345,7 +460,7 @@ async def prom_query_handler(request):
     namespace_value = request.query.get('ns')
     metrics_data = prom_real_time_data.get_metrics_data(env_value, namespace_value)
     final_data = prom_real_time_data.process_metrics_data(metrics_data)
-    return web.json_response({'data': final_data})
+    return web.json_response({'success': True, 'data': final_data})
 
 
 async def prom_ns_handler(request):
@@ -354,15 +469,37 @@ async def prom_ns_handler(request):
         return web.json_response({'message': 'env query parameter is required'}, status=400)
     try:
         namespaces = utils.fetch_prom_namespaces(env_value)
-        return web.json_response({'data': namespaces})
+        return web.json_response({'success': True, 'data': namespaces})
+    except Exception as e:
+        return web.json_response({'message': str(e)}, status=500)
+
+
+async def prom_services_handler(request):
+    env_value = request.query.get('env')
+    namespace = request.query.get('namespace')
+    if not env_value or not namespace:
+        return web.json_response({'message': 'env and namespace query parameters are required'}, status=400)
+    try:
+        services = utils.fetch_prom_services(env_value, namespace)
+        return web.json_response({'success': True, 'data': services})
     except Exception as e:
         return web.json_response({'message': str(e)}, status=500)
 
 
 async def prom_env_handler(request):
     try:
+        username = request.headers.get('X-User-Name', '')
+        permission = request.headers.get('X-User-Permission', '')
         envs = utils.fetch_prom_envs()
-        return web.json_response({'data': envs})
+        return web.json_response({'success': True, 'data': envs, 'username': username, 'permission': permission})
+    except Exception as e:
+        return web.json_response({'message': str(e), 'username': username, 'permission': permission}, status=500)
+
+
+async def agent_names(request):
+    try:
+        k8s_names = utils.ck_get_k8s_names()
+        return web.json_response({'success': True, 'data': k8s_names})
     except Exception as e:
         return web.json_response({'message': str(e)}, status=500)
 
@@ -444,7 +581,7 @@ async def init_peak_data(request):
                 {"message": f"{env_value}: 写入管控表执行失败，详情见kubedoor-master日志"},
                 status=500,
             )
-        return web.json_response({"message": f"{env_value}: 执行完成"})
+        return web.json_response({"success": True, "message": f"{env_value}: 执行完成"})
     except Exception as e:
         logger.error(f"Error in table: {e}")
         return web.json_response({"message": str(e)}, status=500)
@@ -452,6 +589,12 @@ async def init_peak_data(request):
 
 async def start_background_tasks(app):
     """启动后台任务"""
+    # 初始化ClickHouse表结构
+    try:
+        init_clickhouse_tables()
+        logger.info("ClickHouse表结构初始化成功")
+    except Exception as e:
+        logger.error(f"ClickHouse表结构初始化失败: {e}")
     app["heartbeat_task"] = asyncio.create_task(heartbeat_check())
 
 
@@ -465,12 +608,45 @@ app = web.Application()
 app.router.add_get("/ws", websocket_handler)
 app.router.add_get("/ws/pod-logs", pod_logs_websocket_handler)
 app.router.add_post('/api/sql', forward_request)
-app.router.add_get("/api/agent_status", status_handler)
 app.router.add_get("/api/prom_ns", prom_ns_handler)
 app.router.add_get("/api/prom_env", prom_env_handler)
+app.router.add_get("/api/prom_services", prom_services_handler)
 app.router.add_get("/api/prom_query", prom_query_handler)
+app.router.add_post("/api/image/tags", image_tags_fetcher.get_image_tags_handler)  # 8
+
+# 查询K8S事件相关接口
+app.router.add_post("/api/events/query", query_k8s_events_handler)  # 查询K8S事件
+app.router.add_get("/api/events/menu", get_k8s_events_menu_options)  # 获取K8S事件查询菜单选项
+
+# ==========需要rw权限==========
+app.router.add_get("/api/agent_status", status_handler)  # 获取agent状态
+app.router.add_get("/api/agent_names", agent_names)  # istio管理获取K8S列表
 app.router.add_get("/api/init_peak_data", init_peak_data)
 app.router.add_get("/api/cron_peak_data", cron_peak_data)
+
+
+# ==================== Istio Route 路由注册 ====================
+# VS级别接口 query: vs_id, k8s_cluster, namespace
+app.router.add_get("/api/istio/vs", istio_route.get_vs_list_handler)  # 1
+app.router.add_post("/api/istio/vs", istio_route.create_vs_handler)  # 3
+app.router.add_put("/api/istio/vs", istio_route.update_vs_handler)  # 5
+app.router.add_delete("/api/istio/vs", istio_route.delete_vs_handler)
+
+# HTTP路由级别接口 query: route_id, vs_id
+app.router.add_get("/api/istio/httproute", istio_route.get_routes_handler)  # 2
+app.router.add_post("/api/istio/httproute", istio_route.create_route_handler)  # 4
+app.router.add_put("/api/istio/httproute", istio_route.update_route_handler)  # 6
+app.router.add_delete("/api/istio/httproute", istio_route.delete_route_handler)
+
+# 路由管理辅助接口
+app.router.add_post("/api/istio/httproute/reorder", istio_route.reorder_routes_handler)
+app.router.add_get("/api/istio/health", istio_route.health_check_handler)
+
+# K8S集群关联管理接口
+app.router.add_post("/api/istio/vs/k8s", istio_route.update_k8s_vs_handler)  # 7
+
+
+# ==================== 其它接口转发到各个agent ====================
 app.router.add_route('*', "/api/{tail:.*}", http_handler)
 
 # 在应用启动和关闭时管理后台任务

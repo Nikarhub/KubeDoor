@@ -147,12 +147,22 @@ class PureHttp {
           case 401:
             console.log("401");
             break;
+          case 403:
+            message(
+              (error.response.data as any)?.error ||
+                (error.response.data as any)?.message ||
+                "403: 权限不足",
+              {
+                type: "error"
+              }
+            );
+            break;
           default:
             message(
-              error.response?.status +
-                ":" +
-                (error.response.data as any).message ||
-                transformI18n("message.pureInterfaceError"),
+              `${error.response.status}: ` +
+                ((error.response.data as any)?.error ||
+                  (error.response.data as any)?.message ||
+                  transformI18n("message.pureInterfaceError")),
               {
                 type: "error"
               }

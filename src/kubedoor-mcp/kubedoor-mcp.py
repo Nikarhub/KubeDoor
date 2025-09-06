@@ -8,7 +8,7 @@ from mcp.server.fastmcp import FastMCP
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-mcp = FastMCP("KubeDoor-MCP")
+mcp = FastMCP("KubeDoor-MCP", host="0.0.0.0", port=8000)
 MASTER = "http://kubedoor-master.kubedoor"
 
 
@@ -211,7 +211,9 @@ async def get_deployments_info(namespace: str, k8s: str) -> str:
     return await make_request(url, params)
 
 
-@mcp.tool(description="获取可操作的K8S集群列表(返回online: true的即为可操作的集群),如果已经提供了K8S集群名称,则不需要调用该工具。")
+@mcp.tool(
+    description="获取可操作的K8S集群列表(返回online: true的即为可操作的集群),如果已经提供了K8S集群名称,则不需要调用该工具。"
+)
 async def get_k8s_list() -> str:
     """
     Returns:
@@ -236,7 +238,9 @@ async def get_k8s_nodes(k8s: str) -> str:
     return await make_request(url, params)
 
 
-@mcp.tool(description="获取指定命名空间的K8S事件信息/K8S的运行状况/K8S的异常信息，如果不指定命名空间则默认获取所有命名空间的")
+@mcp.tool(
+    description="获取指定命名空间的K8S事件信息/K8S的运行状况/K8S的异常信息，如果不指定命名空间则默认获取所有命名空间的"
+)
 async def get_k8s_events(k8s: str, namespace: str = '') -> str:
     """
     Args:

@@ -77,7 +77,7 @@ menus:
   pureAbnormal: 异常页面
   alarm: 资源告警
   alarmStatistics: 告警面板
-  alarmDetail: 告警详情
+  alarmDetail: K8S告警详情
   peakResources: 高峰资源
   resourceManagement: 高峰资源管控
   resourceCollection: 每日高峰资源
@@ -87,6 +87,9 @@ menus:
   resourceMonitk8s: K8S监控看板
   resourceMonitnode: 节点监控看板
   resourceWorkbench: Agent管理
+  istioManagement: ISTIO管理
+  level1VirtualService: 全局VS管理
+  level2VirtualService: 委托VS管理
   pureFourZeroFour: "404"
   pureFourZeroOne: "403"
   pureFive: "500"

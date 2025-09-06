@@ -273,3 +273,47 @@ export const updateOperate = (params: UpdateOperateParams) => {
     }
   });
 };
+
+export interface EventMenuParams {
+  k8s: string;
+  start_time: string;
+  end_time: string;
+  namespace?: string; // 可选参数
+}
+
+// 获取K8S事件菜单
+export const getEventsMenu = (params: EventMenuParams) => {
+  return http.request<ResultTable>("get", "/api/events/menu", {
+    params
+  });
+};
+
+export interface EventQueryParams {
+  k8s: string;
+  start_time: string;
+  end_time: string;
+  limit: number;
+  namespace?: string;
+  count?: number;
+  level?: string;
+  kind?: string;
+  name?: string;
+  reason?: string;
+  reporting_component?: string;
+  reporting_instance?: string;
+  message?: string;
+}
+
+// 查询K8S事件
+export const queryEvents = (params: EventQueryParams) => {
+  // 过滤掉空值参数
+  const filteredParams = Object.fromEntries(
+    Object.entries(params).filter(
+      ([_, value]) => value !== undefined && value !== null && value !== ""
+    )
+  );
+
+  return http.request<ResultTable>("post", "/api/events/query", {
+    data: filteredParams
+  });
+};

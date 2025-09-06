@@ -18,8 +18,6 @@ interface MessageParams {
   duration?: number;
   /** 是否显示关闭按钮，默认值 `false` */
   showClose?: boolean;
-  /** 文字是否居中，默认值 `false` */
-  center?: boolean;
   /** `Message` 距离窗口顶部的偏移量，默认 `20` */
   offset?: number;
   /** 设置组件的根元素，默认 `document.body` */
@@ -52,7 +50,6 @@ const message = (
       customClass = "antd",
       duration = 2000,
       showClose = false,
-      center = false,
       offset = 20,
       appendTo = document.body,
       grouping = false,
@@ -66,7 +63,6 @@ const message = (
       dangerouslyUseHTMLString,
       duration,
       showClose,
-      center,
       offset,
       appendTo,
       grouping,

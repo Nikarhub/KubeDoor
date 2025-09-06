@@ -181,11 +181,12 @@ async def update_service_content(core_v1, request):
     """
     try:
         import json
+
         env = request.query.get('env')
         namespace = request.query.get('namespace')
         service_name = request.query.get('service_name')
         service_data_str = request.query.get('service_data', '{}')
-        
+
         # 解析JSON字符串
         try:
             service_data = json.loads(service_data_str)
@@ -349,4 +350,41 @@ async def get_service_endpoints(core_v1, request):
         return web.json_response({"error": f"Kubernetes API错误: {e.reason}"}, status=e.status)
     except Exception as e:
         logger.error(f"获取Service Endpoints异常: {e}")
+        return web.json_response({"error": f"服务器内部错误: {str(e)}"}, status=500)
+
+
+async def get_service_first_port(core_v1, request):
+    """
+    GET接口：获取指定Service的第一个端口号
+    参数：
+    - env: 集群名称
+    - namespace: 命名空间
+    - service_name: Service名称
+    - core_v1: Kubernetes CoreV1Api客户端
+    返回：Service的spec.ports第一个元素的port值
+    """
+    try:
+        namespace = request.query.get('namespace')
+        service_name = request.query.get('service_name')
+
+        # 获取指定Service
+        try:
+            service = await core_v1.read_namespaced_service(name=service_name, namespace=namespace)
+        except ApiException as e:
+            if e.status == 404:
+                return web.json_response(
+                    {"error": f"Service '{service_name}' 在命名空间 '{namespace}' 中不存在"}, status=404
+                )
+            raise
+
+        # 获取第一个端口的port值
+        first_port = service.spec.ports[0].port
+        result = {"first_port": first_port}
+        return web.json_response({"success": True, "data": result})
+
+    except ApiException as e:
+        logger.error(f"获取Service第一个端口失败: {e}")
+        return web.json_response({"error": f"Kubernetes API错误: {e.reason}"}, status=e.status)
+    except Exception as e:
+        logger.error(f"获取Service第一个端口异常: {e}")
         return web.json_response({"error": f"服务器内部错误: {str(e)}"}, status=500)

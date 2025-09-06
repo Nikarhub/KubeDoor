@@ -18,7 +18,7 @@
               @change="handleTimeRangeChange"
             >
               <el-option label="今天" :value="0" />
-              <el-option label="最近1天" :value="1" />
+              <el-option label="昨天" :value="1" />
               <el-option label="最近3天" :value="3" />
               <el-option label="最近5天" :value="5" />
               <el-option label="最近7天" :value="7" />
@@ -64,13 +64,17 @@
         >
           <el-button-group>
             <el-button @click="getAlarmData()">
-              <el-icon style="margin-right: 4px"><RefreshRight /></el-icon>
+              <el-icon style="margin-right: 4px">
+                <RefreshRight />
+              </el-icon>
               刷新
             </el-button>
             <el-dropdown trigger="click" @command="handleRefreshIntervalChange">
               <el-button>
                 {{ autoRefreshInterval === 0 ? "" : autoRefreshInterval + "s" }}
-                <el-icon style="margin-left: 4px"><ArrowDown /></el-icon>
+                <el-icon style="margin-left: 4px">
+                  <ArrowDown />
+                </el-icon>
               </el-button>
 
               <template #dropdown>
@@ -335,7 +339,8 @@ onUnmounted(() => {
   padding: 16px;
   overflow: hidden;
   cursor: pointer;
-  background: linear-gradient(135deg, #fff 0%, #f5f7fa 100%);
+  background: linear-gradient(135deg, 0%, #f5f7fa 100%);
+  border: 1px solid #dcdfe6;
   border-radius: 12px;
   box-shadow: 0 4px 20px rgb(0 0 0 / 5%);
   transition: all 0.3s ease;

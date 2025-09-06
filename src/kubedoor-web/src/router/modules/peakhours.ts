@@ -8,7 +8,7 @@ export default {
   meta: {
     icon: "ep:histogram",
     title: $t("menus.peakResources"),
-    rank: 2
+    rank: 10
   },
   children: [
     {

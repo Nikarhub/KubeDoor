@@ -62,13 +62,46 @@
 
     <!-- 表格数据 -->
     <!-- 更新弹窗 -->
-    <el-dialog v-model="updateDialogVisible" title="更新镜像" width="500px">
-      <el-form :model="updateForm" label-width="80px">
-        <el-form-item label="镜像标签">
-          <el-input
+    <el-dialog v-model="updateDialogVisible" title="更新镜像" width="600px">
+      <el-form :model="updateForm" label-width="100px">
+        <!-- 当前镜像信息 -->
+        <div
+          v-if="updateForm.currentImageInfo.length > 0"
+          style="
+            margin-bottom: 20px;
+            padding: 15px;
+            border: 2px solid #dcdfe6;
+            border-radius: 4px;
+          "
+        >
+          <div style="font-weight: bold; margin-bottom: 10px">当前镜像：</div>
+          <div style="margin-bottom: 5px">
+            地址：{{ updateForm.currentImageInfo[0] || "" }}
+          </div>
+          <div style="margin-bottom: 5px">
+            标签：{{ updateForm.currentImageInfo[1] || "" }}
+          </div>
+          <div v-if="updateForm.currentImageInfo.length > 2">
+            时间：{{ updateForm.currentImageInfo[2] || "" }}
+          </div>
+        </div>
+
+        <el-form-item label="更新镜像：">
+          <el-select
             v-model="updateForm.imageTag"
-            placeholder="请输入镜像标签"
-          />
+            placeholder="请选择或输入镜像标签"
+            style="width: 100%"
+            filterable
+            allow-create
+            clearable
+          >
+            <el-option
+              v-for="tag in updateForm.availableTags"
+              :key="tag[1]"
+              :label="`${tag[0]}：${tag[1]}`"
+              :value="tag[1]"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -376,13 +409,18 @@
                   >
                     <template #default="podScope">
                       <div
-                        style="
-                          overflow: hidden;
-                          text-align: left;
-                          text-overflow: ellipsis;
-                          white-space: nowrap;
-                          direction: rtl;
-                        "
+                        :style="{
+                          overflow: 'hidden',
+                          'text-align': 'left',
+                          'text-overflow': 'ellipsis',
+                          'white-space': 'nowrap',
+                          direction: 'rtl',
+                          color:
+                            podScope.row.app_label &&
+                            podScope.row.app_label.endsWith('-ALERT')
+                              ? 'red'
+                              : ''
+                        }"
                       >
                         {{ podScope.row.app_label }}
                       </div>
@@ -716,7 +754,8 @@ import {
   getPodData,
   showAddLabel,
   getPodPreviousLogs,
-  createPodLogStreamUrl
+  createPodLogStreamUrl,
+  getImageTags
 } from "@/api/monit";
 import { useResource } from "./utils/hook";
 import { useSearchStoreHook } from "@/store/modules/search";
@@ -798,13 +837,29 @@ const updateDialogVisible = ref(false);
 const updateLoading = ref(false);
 const selectedDeployment = ref<any>(null);
 const updateForm = reactive({
-  imageTag: ""
+  imageTag: "",
+  currentImageInfo: [] as string[],
+  availableTags: [] as Array<[string, string]>
 });
 
-const openUpdateDialog = (row: any) => {
+const openUpdateDialog = async (row: any) => {
   selectedDeployment.value = row;
   updateForm.imageTag = "";
+  updateForm.currentImageInfo = [];
+  updateForm.availableTags = [];
   updateDialogVisible.value = true;
+
+  // 获取镜像标签信息
+  try {
+    const response = await getImageTags(row.env, row.namespace, row.deployment);
+    if (response.success && response.data) {
+      updateForm.currentImageInfo = response.data.current_tag_info || [];
+      updateForm.availableTags = response.data.tags || [];
+    }
+  } catch (error) {
+    console.error("获取镜像标签失败:", error);
+    // 错误消息由全局HTTP拦截器处理
+  }
 };
 
 const handleUpdate = async () => {
@@ -1759,7 +1814,6 @@ onMounted(async () => {
 <style scoped>
 .search-section {
   padding: 16px;
-  background-color: #fff;
   border-radius: 8px;
 }
 
@@ -1774,8 +1828,7 @@ onMounted(async () => {
 }
 
 .pod-detail-container {
-  padding: 5px;
-  background-color: #f5f7fa;
+  padding: 3px;
   border-radius: 0;
 }
 

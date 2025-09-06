@@ -105,13 +105,13 @@ const { t, locale, translationCh, translationEn } = useTranslationLang();
           </el-dropdown-menu>
         </template>
       </el-dropdown> -->
-      <!-- <span
+      <span
         class="set-icon navbar-bg-hover"
         :title="t('buttons.pureOpenSystemSet')"
         @click="onPanel"
       >
         <IconifyIconOffline :icon="Setting" />
-      </span> -->
+      </span>
     </div>
   </div>
 </template>

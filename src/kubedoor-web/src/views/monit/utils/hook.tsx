@@ -234,7 +234,7 @@ export function useResource() {
         });
         resolve(true);
       } else {
-        message((res as any).message, {
+        message((res as any).error || (res as any).message, {
           type: "error"
         });
       }

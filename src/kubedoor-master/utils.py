@@ -10,6 +10,7 @@ from functools import wraps
 from loguru import logger
 from promql import query_dict, node_rank_query
 
+
 logger.remove()
 logger.add(
     sys.stderr,
@@ -27,8 +28,18 @@ CK_USER = os.environ.get('CK_USER')
 MSG_TOKEN = os.environ.get('MSG_TOKEN')
 MSG_TYPE = os.environ.get('MSG_TYPE')
 PROM_K8S_TAG_KEY = os.environ.get('PROM_K8S_TAG_KEY')
+# 告警去重时间窗口（秒），默认300秒
+ALERT_DEDUP_WINDOW = int(os.environ.get('ALERT_DEDUP_WINDOW', '300'))
 PROM_TYPE = os.environ.get('PROM_TYPE')
 PROM_URL = os.environ.get('PROM_URL')
+UPDATE_IMAGE = os.environ.get('UPDATE_IMAGE')
+
+# Istio Route 数据库配置
+DB_HOST = os.environ.get('DB_HOST', 'localhost')
+DB_PORT = int(os.environ.get('DB_PORT', '3306'))
+DB_USER = os.environ.get('DB_USER', 'root')
+DB_PASSWORD = os.environ.get('DB_PASSWORD', '123456')
+DB_NAME = os.environ.get('DB_NAME', 'istio_route')
 
 
 ckclient = Client(
@@ -137,6 +148,24 @@ def fetch_prom_namespaces(env_value):
             labels = result['metric']
             namespaces.append(labels.get('namespace'))
         return namespaces
+    except requests.exceptions.RequestException as e:
+        raise Exception(f"Error fetching data from Prometheus: {e}")
+
+
+def fetch_prom_services(env_value, namespace):
+    """
+    获取指定环境和命名空间的service列表
+    """
+    query = f'group by(service)(kube_service_info{{{PROM_K8S_TAG_KEY}="{env_value}",namespace="{namespace}"}})'
+    try:
+        response = requests.get(get_prom_url(), params={'query': query})
+        response.raise_for_status()  # 检查请求是否成功
+        data = response.json()
+        services = []
+        for result in data['data']['result']:
+            labels = result['metric']
+            services.append(labels.get('service'))
+        return services
     except requests.exceptions.RequestException as e:
         raise Exception(f"Error fetching data from Prometheus: {e}")
 
@@ -300,11 +329,23 @@ def ck_agent_collect_info():
 
 
 def ck_init_agent_status(env):
-    """从ck中读取agent的信息"""
     result = ckclient.execute(f"SELECT 1 FROM k8s_agent_status where env = '{env}'")
     if not result:
         ckclient.execute(f"INSERT INTO k8s_agent_status (env) VALUES ('{env}')")
     return True
+
+
+def ck_get_k8s_names():
+    """从ck中获取所有K8S环境名称，按顺序排序"""
+    try:
+        result = ckclient.execute("SELECT env FROM k8s_agent_status ORDER BY env")
+        k8s_names = [row[0] for row in result]
+        return k8s_names
+    except ServerException as e:
+        logger.exception(e)
+        return []
+    finally:
+        ckclient.disconnect()
 
 
 def ck_agent_info():
@@ -369,14 +410,17 @@ def get_deploy_admis(env, namespace, deployment):
         return [503, '查询数据库异常']
 
 
-def send_msg(content):
+def send_msg(content, msgToken=None):
     response = ""
+    token = msgToken if msgToken is not None else MSG_TOKEN
     if MSG_TYPE == "wecom":
-        response = wecom(MSG_TOKEN, content)
-    if MSG_TYPE == "dingding":
-        response = wecom(MSG_TOKEN, content)
-    if MSG_TYPE == "feishu":
-        response = wecom(MSG_TOKEN, content)
+        response = wecom(token, content)
+    elif MSG_TYPE == "dingding":
+        response = dingding(token, content)
+    elif MSG_TYPE == "feishu":
+        response = feishu(token, content)
+    elif MSG_TYPE == "slack":
+        response = slack(token, content)
     return f'【{MSG_TYPE}】{response}'
 
 
@@ -423,6 +467,25 @@ def feishu(webhook, content, at=""):
     data = json.dumps(params)
     response = requests.post(webhook, headers=headers, data=data)
     logger.info(f'【feishu】{response.json()}')
+    return response.json()
+
+
+def slack(webhook, content, at=""):
+    """发送Slack告警通知"""
+    # 构建完整的Slack Webhook URL
+    webhook_url = f'https://hooks.slack.com/services/{webhook}'
+    headers = {'Content-Type': 'application/json'}
+
+    # 构建消息内容，如果有@用户则添加
+    message_text = content
+    if at:
+        message_text += f" <@{at}>"
+
+    params = {"text": message_text}
+
+    data = json.dumps(params)
+    response = requests.post(webhook_url, headers=headers, data=data)
+    logger.info(f'【slack】{response.json()}')
     return response.json()
 
 
@@ -649,6 +712,32 @@ def get_deployment_from_control_data(deployment_list, num, type, env):
             top_deployments = top_deployments[:num]
 
     return top_deployments
+
+
+async def get_deployment_image(promql, k8s, namespace, deployment):
+    query = (
+        promql.get("promql")
+        .replace("{env_key}", f"{PROM_K8S_TAG_KEY},")
+        .replace("{env}", f'{PROM_K8S_TAG_KEY}="{k8s}",')
+        .replace("{namespace}", namespace)
+        .replace("{deployment}", deployment)
+    )
+    logger.info(f"查询镜像信息，query: {query}")
+    response = requests.get(get_prom_url(), params={'query': query})
+    response.raise_for_status()
+    data = response.json().get("data").get("result")
+
+    # 过滤有效数据
+    valid_data = [i for i in data if i.get('metric', {}).get('image_spec', i.get('metric', {}).get('image', False))]
+
+    # 检查数据条数
+    if len(valid_data) == 0:
+        raise ValueError(f"未找到deployment {namespace}/{deployment} 的镜像信息")
+    elif len(valid_data) > 1:
+        logger.info(f"deployment {namespace}/{deployment} 查询到多条镜像数据，期望只有一条")
+        return k8s, 'retry'
+    # 返回image标签的值
+    return k8s, valid_data[0].get('metric').get('image_spec', valid_data[0].get('metric').get('image'))
 
 
 async def get_node_res_rank(env_value, res_type):

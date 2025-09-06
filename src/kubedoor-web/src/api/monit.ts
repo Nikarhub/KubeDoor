@@ -26,6 +26,17 @@ export const getPromNamespace = (env: string) => {
 };
 
 /**
+ * 获取服务列表
+ * @param env K8S环境
+ * @param namespace 命名空间
+ */
+export const getPromServices = (env: string, namespace: string) => {
+  return http.request<ResultTable>("get", "/api/prom_services", {
+    params: { env, namespace }
+  });
+};
+
+/**
  * 获取监控数据
  * @param env K8S环境
  * @param ns 命名空间（可选）
@@ -115,4 +126,20 @@ export const createPodLogStreamUrl = (
   const protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
   const host = window.location.host;
   return `${protocol}//${host}/ws/pod-logs?env=${env}&namespace=${namespace}&pod_name=${podName}`;
+};
+
+/**
+ * 获取镜像标签列表
+ * @param k8s K8S环境
+ * @param namespace 命名空间
+ * @param deployment 部署名称
+ */
+export const getImageTags = (
+  k8s: string,
+  namespace: string,
+  deployment: string
+) => {
+  return http.request<any>("post", "/api/image/tags", {
+    data: { k8s, namespace, deployment }
+  });
 };

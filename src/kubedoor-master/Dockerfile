@@ -1,6 +1,8 @@
-FROM registry.cn-shenzhen.aliyuncs.com/starsl/python:3.11-alpine
+FROM registry.cn-shenzhen.aliyuncs.com/starsl/python:3.12-alpine
 ADD . /
 WORKDIR /
-RUN pip3 install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple/ --no-cache-dir
+RUN sed -i 's/dl-cdn.alpinelinux.org/repo.huaweicloud.com/g' /etc/apk/repositories && \
+    apk add gcc musl-dev --no-cache && \
+    pip3 install -r requirements.txt -i https://mirrors.aliyun.com/pypi/simple/ --no-cache-dir
 EXPOSE 80
 CMD ["python3", "/kubedoor-master.py"]
