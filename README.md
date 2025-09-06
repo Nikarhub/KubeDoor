@@ -80,7 +80,7 @@
   >目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
 </details>
 
-##### **KubeDoor 支持多K8S ISTIO VirtualService规则的管理与同步**
+##### **💠KubeDoor 支持多K8S ISTIO VirtualService规则的管理与同步**
 <details close>
 <summary>🔍点击展开 ...</summary>
 
