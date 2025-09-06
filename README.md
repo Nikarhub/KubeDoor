@@ -40,12 +40,12 @@
 ## 💠全新架构
 <div align="center">
 
-### 🎉花折 - KubeDoor 1.5发布！新增K8S事件监控，Pod实时日志，K8S MCP！多K8S统一管控，K8S监控、告警、展示的最佳实践🎉
+#### 🎉v1.5发布！新增K8S事件监控，Pod实时日志，K8S MCP！多K8S统一管控，K8S监控、告警、展示的最佳实践🎉
 ![KubeDoor1.5.2](screenshot/KubeDoor1.3.3.png)
 </div>
 
 ## 💎功能描述
-### 0. 💥 新版本功能看点
+### 0. 💥 新版功能亮点
 ##### **💠KubeDoor K8S事件采集分析与监控告警！**
 <details close>
 <summary>点击展开 ...</summary>
@@ -248,41 +248,10 @@ helm upgrade -i kubedoor-agent . --namespace kubedoor --create-namespace --value
 </table>
 </div>
 
-## 🎯2025 KubeDoor RoadMap
-- **[📅KubeDoor 项目进度](https://github.com/orgs/CassInfra/projects/1/views/1)**
-- 🥈英文版发布
-- 🏅微服务AI评分：根据资源使用情况，发现资源浪费的问题，结合AI缩容，降本增效，做AI综合评分，接入K8S异常AI分析能力。
-- 🏅微服务AI缩容：基于微服务高峰期的资源信息，对接AI分析与专家经验，计算微服务Pod数是否合理，生成缩容指令与统计。
-- 🏅根据K8S节点资源使用率做节点管控与调度分析
-- ✅采集更多的微服务资源信息: QPS/JVM/GC
-- ✅针对微服务Pod做精细化操作：隔离、删除、dump、jstack、jfr、jvm
-- ✅K8S资源告警管理，按日智能聚合。
-- ✅多K8S支持：在统一的WebUI对多K8S做管控和资源分析展示。
-- ✅集成K8S实时监控能力，实现一键部署，整合K8S实时资源看板。
-
-## ⭐STAR History
-
-<div align="center">
-
-[![Star History Chart](https://api.star-history.com/svg?repos=CassInfra/KubeDoor&type=Date)](https://github.com/CassInfra/KubeDoor)
-
-</div>
-
 ## 🥰鸣谢
 
 感谢如下优秀的项目，没有这些项目，不可能会有**KubeDoor**：
+- [TRAE](www.trae.ai) [Python](https://www.python.org/) [AIOHTTP](https://github.com/aio-libs/aiohttp) [VUE](https://cn.vuejs.org/) [Pure Admin](https://pure-admin.cn/) [Element Plus](https://element-plus.org) [Kubernetes](https://kubernetes.io/) [VictoriaMetrics](https://victoriametrics.com/) [ClickHouse](https://clickhouse.com/) [Grafana](https://grafana.com/) [Nginx](https://nginx.org/) ...
 
-- 前后端技术栈
-  - [Vue](https://vuejs.org/)
-  - [Element Plus](https://element-plus.org)
-  - [pure-admin](https://pure-admin.cn/)
-  - [Flask](https://flask.palletsprojects.com)
-
-- 基础服务
-  - [VictoriaMetrics](https://victoriametrics.com/)
-  - [ClickHouse](https://clickhouse.com/)
-  - [Grafana](https://grafana.com/)
-  - [Nginx](https://nginx.org/)
-
-- **特别鸣谢**
-  - [**CassTime**](https://www.casstime.com)：**KubeDoor**的诞生离不开🦄**开思**的支持。
+**特别鸣谢**
+- [**CassTime**](https://www.casstime.com)：**KubeDoor**的诞生离不开🦄**开思**的支持。
