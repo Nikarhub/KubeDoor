@@ -64,6 +64,17 @@
 | ------------------------------------|
 </details>
 
+##### **💠KubeDoor 支持多K8S ISTIO VirtualService规则的管理与同步。**
+<details close>
+<summary>🔍点击展开 ...</summary>
+
+**🚸内部试用阶段，使用MySQL数据源，如需使用，请联系作者协助调试。**
+|<img width="2463" height="1310" alt="1" src="https://github.com/user-attachments/assets/695bc0d1-929f-4326-8ab6-7e8590319cf5" /> | <img width="893" height="897" alt="3" src="https://github.com/user-attachments/assets/0a74c56c-6a76-4c85-9d2e-e498aaa0b2aa" /> |
+| ------------------------------------| ----------------------------------- |
+| <img width="2460" height="1311" alt="2" src="https://github.com/user-attachments/assets/4e512717-c3d9-4131-824e-c02de89c59fe" />|<img width="1332" height="1182" alt="4" src="https://github.com/user-attachments/assets/2095e0bd-3077-48c6-bcef-25ee258495cc" /> |
+
+</details>
+
 ##### **💠KubeDoor MCP 体验版来啦！接入任意MCP客户端，即可与LLM对话方式：对您的所有K8S集群操作、资源异常故障分析。**
 <details close>
 <summary>🔍点击展开 ...</summary>
@@ -78,17 +89,6 @@
   >由于大语言模型的不确定性，请尽量使用带工具确认的MCP客户端（Cline、Cursor）。
   >
   >目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
-</details>
-
-##### **💠KubeDoor 支持多K8S ISTIO VirtualService规则的管理与同步**
-<details close>
-<summary>🔍点击展开 ...</summary>
-
-**🚸内部试用阶段，使用MySQL数据源，如需使用，请联系作者协助调试。**
-|<img width="2463" height="1310" alt="1" src="https://github.com/user-attachments/assets/695bc0d1-929f-4326-8ab6-7e8590319cf5" /> | <img width="893" height="897" alt="3" src="https://github.com/user-attachments/assets/0a74c56c-6a76-4c85-9d2e-e498aaa0b2aa" /> |
-| ------------------------------------| ----------------------------------- |
-| <img width="2460" height="1311" alt="2" src="https://github.com/user-attachments/assets/4e512717-c3d9-4131-824e-c02de89c59fe" />|<img width="1332" height="1182" alt="4" src="https://github.com/user-attachments/assets/2095e0bd-3077-48c6-bcef-25ee258495cc" /> |
-
 </details>
 
 ---
