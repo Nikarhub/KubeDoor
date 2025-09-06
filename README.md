@@ -40,13 +40,32 @@
 ## 💠全新架构
 <div align="center">
 
-### 🎉花折 - KubeDoor 1.3发布！多K8S支持的MCP来啦！全新架构，多K8S管控支持，多K8S统一监控、告警、展示最佳实践🎉
+### 🎉花折 - KubeDoor 1.5发布！新增K8S事件监控，Pod实时日志，K8S MCP！多K8S统一管控，K8S监控、告警、展示的最佳实践🎉
 ![KubeDoor1.5.2](screenshot/KubeDoor1.3.3.png)
 </div>
 
 ## 💎功能描述
-### 0. 💥 新版本功能关注
+### 0. 💥 新版本功能看点
+##### **💠KubeDoor K8S事件采集分析与监控告警！**
+<details close>
+<summary>点击展开 ...</summary>
+
+| <img src="https://github.com/user-attachments/assets/19f50de7-248d-429d-9c19-c3a6a2282716"/> | <img src="https://github.com/user-attachments/assets/26e03c8e-4038-4094-affe-1d4de85d4675"/> |
+| ------------------------------------| ----------------------------------- |
+</details>
+
+##### **💠KubeDoor WEB 新增Pod实时日志跟踪，自动多色标记各级别异常，支持关键字查询定位与过滤。支持日志自带颜色显示。**
+<details close>
+<summary>点击展开 ...</summary>
+
+|<img width="2418" height="1278" alt="图片" src="https://github.com/user-attachments/assets/e563c36a-2c1c-4cee-9b35-21a20976856b" />|
+| ------------------------------------|
+</details>
+
 ##### **💠KubeDoor MCP 体验版来啦！接入任意MCP客户端，即可与LLM对话方式：对您的所有K8S集群操作、资源异常故障分析。**
+<details close>
+<summary>点击展开 ...</summary>
+
 - 使用任意MCP客户端, 新增MCP服务器, 选择sse类型,地址输入：`http://{nodeIP}:{kubedoor-mcp-NodePort}/sse`即可接入KubeDoor MCP.
 - 基于KubeDoor的多K8S管理监控架构与已有的API接口，可以快速生成大量MCP工具来操作K8S与Grafana数据分析，敬请期待！
 - **已接入的工具列表与操作演示**
@@ -57,11 +76,9 @@
   >由于大语言模型的不确定性，请尽量使用带工具确认的MCP客户端（Cline、Cursor）。
   >
   >目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
+</details>
 
-##### **💠KubeDoor WEB 新增Pod实时日志跟踪，自动多色标记各级别异常，支持关键字查询定位与过滤。支持日志自带颜色显示**
-
-|<img width="2418" height="1278" alt="图片" src="https://github.com/user-attachments/assets/e563c36a-2c1c-4cee-9b35-21a20976856b" />|
-| ------------------------------------|
+---
 
 ### 1. 📡资源监控分析：多K8S集群统一监控最佳实践
 <div align="center">
@@ -83,6 +100,8 @@
 
 </div>
 
+---
+
 ### 2. 🧬异常告警聚合
 
 - 🦄K8S微服务统一告警分析与处理页面，告警按天智能聚合，相同告警按日累计计数，每日告警清晰明了。
@@ -94,6 +113,8 @@
 | ------------------------------------| ----------------------------------- | ----------------------------------- |
 | <img src="./screenshot/1.0/6.png"/> | <img src="./screenshot/1.0/7.jpg"/> | <img src="./screenshot/1.0/8.png"/> |
 </div>
+
+---
 
 ### 3. 💠高峰期P95资源采集分析
 
@@ -123,9 +144,13 @@
   - ♻**K8S自动扩缩容**也依赖资源需求值来判断，**真实的需求值可以更精准的触发扩缩容操作**。
   - 🛡**K8S的保障服务质量**（QoS机制）与需求值结合，真实需求值的Pod会被优先保留，**保证关键服务的正常运行**。
 
+---
+
 ### 4. 🛡基于K8S准入控制针对微服务Pod数、需求值、限制值与高峰资源强一致的管控能力
 
 - #### <a target="_blank" href="docs/K8S资源管控功能说明.md">👑基于准入控制的管控能力详解</a>
+
+---
 
 ### 5. ✨其它
   - ❤️Agent管理页面：更新，维护Agent状态，配置采集与管控。
@@ -136,6 +161,8 @@
 | <img src="./screenshot/1.0/11.jpg" width="800;" />| 
 | ------------------------------------|
 </div>
+
+---
 
 ## 📀KubeDoor 全新架构，全新部署
 
@@ -160,8 +187,7 @@ helm upgrade -i kubedoor-agent . --namespace kubedoor --create-namespace --value
 ### ♻更新KubeDoor 1.5.2
 **♻[更新说明](https://github.com/CassInfra/KubeDoor/releases/tag/1.5.2)**
 
-
-## 📀KubeDoor 使用介绍 MCP来啦
+### 📀KubeDoor 使用
 
 #### 🌐访问WebUI 并初始化数据
 
@@ -172,17 +198,6 @@ helm upgrade -i kubedoor-agent . --namespace kubedoor --create-namespace --value
 >重复执行`采集`不会导致重复写入数据，请放心使用；每次采集后都会自动将10天内最大资源消耗日的数据写入到管控表。如果耗时较长，请等待采集完成或缩短采集时长。
 
 >如果您是新安装的监控系统，并且已过了当天的高峰期时段，将会无法采集到数据；需要等第二天高峰期时段之后才能采集到数据。
-
-#### 💠使用KubeDoor MCP
-##### 花折 KubeDoor MCP 体验版上线啦
-- 使用任意MCP客户端, 新增MCP服务器, 选择sse类型,地址输入：`http://{nodeIP}:{kubedoor-mcp-NodePort}/sse`即可接入KubeDoor MCP.
-- 由于大语言模型的不确定性，请尽量使用带工具确认的的MCP客户端（cline、Cursor）。
-- 目前为体验版，暂未做MCP WEB客户端以及工具调用鉴权，请勿将MCP服务端地址暴露到公网。
-- 基于KubeDoor的多K8S管理监控架构与已有的API接口，可以快速生成大量MCP工具来操作K8S与Grafana数据分析，敬请期待！
-- 已接入的工具列表
-![图片](https://github.com/user-attachments/assets/19f50de7-248d-429d-9c19-c3a6a2282716)
-- 演示
-![kubedoor-mcp](https://github.com/user-attachments/assets/26e03c8e-4038-4094-affe-1d4de85d4675)
 
 ---
 
