@@ -239,9 +239,9 @@ helm upgrade -i kubedoor-agent . --namespace kubedoor --create-namespace --value
 <div align="center">
 
 #### 如果觉得项目不错，麻烦动动小手点个⭐️Star⭐️ 如果你还有其他想法或者需求，欢迎在 issue 中交流
-<img src="https://github.com/user-attachments/assets/eb324f3d-ea4e-4d30-a80c-36c5dfb7c090" width="600;" alt="kubedoor"/>
+<img width="600" alt="kubedoor-wechat" src="https://github.com/user-attachments/assets/91babc64-2473-4dd2-bc39-eaa8c3232156" />
 
-无法加群可关注公众号入群
+**加作者微信或关注公众号加入交流群**
 
 </div>
 
