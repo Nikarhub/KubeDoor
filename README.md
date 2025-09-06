@@ -40,7 +40,7 @@
 ## 💠全新架构
 <div align="center">
 
-#### 🎉1.5发布！新增K8S事件监控，Pod实时日志，K8S MCP支持！K8S统一管控，多K8S监控、告警、展示的最佳实践🎉
+#### 🎉新增K8S事件监控，Pod实时日志，K8S MCP支持！K8S统一管控，多K8S监控、告警、展示的最佳实践🎉
 ![KubeDoor1.5.2](screenshot/KubeDoor1.3.3.png)
 </div>
 
