@@ -101,7 +101,7 @@
 
   - 🌊基于VictoriaMetrics全家桶实现**多K8S集群**统一远程存储、监控、告警、展示的一站式K8S监控方案。
   - 🎨集成了K8S节点监控看板与K8S资源监控看板，均支持在单一看板中查看各个K8S集群的资源情况。
-  - 📐内置大量K8S资源，JVM资源与K8S节点的告警规则，支持统一告警规则管理，对接各IM告警通知及灵活的@机制。
+  - 📐内置K8S资源，JVM资源与K8S节点的告警规则，支持统一告警规则管理，对接各IM告警及灵活的@机制。
 <div align="center">
    
 | <img width="550" src="https://github.com/user-attachments/assets/5a1ba8db-ac3d-4852-b913-000b78c5d0f5" />| <img width="700" src="./screenshot/1.0/2.jpg"/> |<img width="700" src="./screenshot/1.0/3.png"/> | 
