@@ -67,9 +67,11 @@
 </details>
 
 
-##### **💠K8S微服务版本更新功能支持指定账号，指定时段授权操作，以及自动从镜像仓库获取标签。**
+##### **💠K8S微服务版本更新功能：支持指定账号，指定时段授权操作，以及自动从镜像仓库获取标签。**
 <details close>
 <summary>🔍点击展开 ...</summary>
+<a target="_blank" href="docs/K8S微服务镜像更新配置说明.md">【K8S微服务镜像更新配置说明】</a>
+
  
 |<img width="600" src="https://github.com/user-attachments/assets/0c7d1891-3df1-4413-a7c2-1b2288c35a25" /> |
 |-|
