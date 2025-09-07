@@ -17,7 +17,7 @@
 </div>
 
 ---
-**国内用户如果访问图片异常，可以访问Gitee同步站：https://gitee.com/starsl/KubeDoor**
+**国内用户如果访问图片异常，可以访问Gitee同步站：  <a target="_blank" href="https://gitee.com/starsl/KubeDoor">https://gitee.com/starsl/KubeDoor</a>**
 
 
 ## 🏷目录
