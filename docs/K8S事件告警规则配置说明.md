@@ -153,3 +153,4 @@ KubeDoor K8S事件告警系统是一个基于规则驱动的智能告警解决�
 | reportingComponent | 事件来源 |
 | reportingInstance | 来源IP |
 
+#### 注意：K8S事件告警去重时间窗口，通过变量`ALERT_DEDUP_WINDOW`控制（configmap：kubedoor-config），默认300秒。（即重复事件告警5分钟最多通知一次。）
