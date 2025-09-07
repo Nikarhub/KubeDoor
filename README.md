@@ -104,20 +104,20 @@
   - 📐内置大量K8S资源，JVM资源与K8S节点的告警规则，支持统一告警规则管理，对接各IM告警通知及灵活的@机制。
 <div align="center">
    
-| <img width="650" src="https://github.com/user-attachments/assets/5a1ba8db-ac3d-4852-b913-000b78c5d0f5" />| <img width="650" src="./screenshot/1.0/2.jpg"/> |<img width="650" src="./screenshot/1.0/3.png"/> | 
+| <img width="550" src="https://github.com/user-attachments/assets/5a1ba8db-ac3d-4852-b913-000b78c5d0f5" />| <img width="700" src="./screenshot/1.0/2.jpg"/> |<img width="700" src="./screenshot/1.0/3.png"/> | 
 | ------------------------------------| ----------------------------------- | ---------------------------------- |
 
 </div>
 
 ### 2. 🎛K8S资源维护管理：特色管控功能增强
-- 🎭K8S负载实时监控管理页面：实时查看微服务状态与Pod日志跟踪，自动多色标记各级别异常，支持关键字查询定位与过滤。
-- 📀微服务版本更新支持**指定账号**，**指定时段**授权操作，以及**自动从镜像仓库获取标签**。
+- 🎭K8S负载实时监控管理页面：实时查看微服务状态与**Pod日志跟踪**，自动**多色标记**各级别异常，支持关键字筛选。
+- 📀微服务版本更新支持**指定账号**，**指定时段**授权操作，以及**自动从镜像仓库获取标签**。<a target="_blank" href="docs/K8S微服务镜像更新配置说明.md">【K8S微服务镜像更新配置说明】</a>
 - ⏱️支持**即时、定时、周期性**执行微服务的**扩缩容和重启**操作。
-- ♨针对JAVA微服务提供大量性能分析操作支持。
-- 🌐支持多K8S ISTIO VirtualService规则的管理与同步。
+- ♨针对**JAVA微服务**提供大量性能分析操作支持。
+- 🌐支持多K8S **ISTIO VirtualService**规则的管理与同步。
 <div align="center">
 
-| <img  width="650" src="./screenshot/1.0/1.png"/> |<img width="650" src="https://github.com/user-attachments/assets/0c7d1891-3df1-4413-a7c2-1b2288c35a25" /> |<img width="650" src="https://github.com/user-attachments/assets/d25f67b0-25df-4a43-af8d-49b9fc385c85" />| 
+| <img  width="850" src="./screenshot/1.0/1.png"/> |<img width="550" src="https://github.com/user-attachments/assets/0c7d1891-3df1-4413-a7c2-1b2288c35a25" /> |<img width="550" src="https://github.com/user-attachments/assets/d25f67b0-25df-4a43-af8d-49b9fc385c85" />| 
 | ------------------------------------| ----------------------------------- | ---------------------------------- |
 
 </div>
@@ -128,7 +128,7 @@
 
 - 🦄K8S微服务统一告警分析与处理页面，告警**按日智能聚合**展示，处理标记，相同告警按日累计计数，每日告警清晰明了。
 - 🕹️支持对POD进行**隔离，删除，Java dump，jstack，jfr，JVM**数据采集分析等操作，并通知到IM。
-- 📺新增K8S事件采集分析与监控告警！多K8S事件采集与查询分析，灵活的K8S事件告警规则配置。
+- 📺新增K8S事件采集分析与监控告警！多K8S事件采集与查询分析，灵活的K8S事件告警规则配置。<a target="_blank" href="docs/K8S事件告警规则配置说明.md">【K8S事件告警规则配置说明】</a>
 <div align="center">
 
 | <img src="./screenshot/1.0/4.jpg"/> | <img src="./screenshot/1.0/5.png"/> | <img src="./screenshot/1.0/15.jpg"/> |
@@ -200,7 +200,7 @@ helm upgrade -i kubedoor-agent . --namespace kubedoor --create-namespace --value
 ```
 </details>
 
-#### ♻更新指引[【版本变更记录】](https://github.com/CassInfra/KubeDoor/releases/tag/1.5.2)
+#### ♻更新指引<a target="_blank" href="https://github.com/CassInfra/KubeDoor/releases/tag/1.5.2">【版本变更记录】</a>
 
 <details close>
 <summary>🔍点击展开 ...</summary>
