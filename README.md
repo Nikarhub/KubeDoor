@@ -44,9 +44,6 @@
 <div align="center">
 
 #### 🎉新增K8S事件监控，Pod实时日志，K8S MCP支持！K8S统一管控，多K8S监控、告警、展示的最佳实践🎉
-<a target="_blank" href="docs/K8S事件告警规则配置说明.md">【K8S事件告警规则配置说明】</a>
-
-<div align="center">
 ![KubeDoor1.5.2](screenshot/KubeDoor1.3.3.png)
 </div>
 
@@ -55,7 +52,8 @@
 ##### **💠KubeDoor K8S事件采集分析与监控告警！多K8S事件采集与查询分析，灵活的K8S事件告警规则配置。**
 <details close>
 <summary>🔍点击展开 ...</summary>
-
+<a target="_blank" href="docs/K8S事件告警规则配置说明.md">【K8S事件告警规则配置说明】</a>
+ 
 |<img src="https://github.com/user-attachments/assets/916b77dd-5747-47f3-94cc-f8ef3027193a" />|<img src="https://github.com/user-attachments/assets/44b83c51-dee2-4d99-89d6-0230cd8e06e2" />|
 | ------------------------------------| ----------------------------------- |
 </details>
