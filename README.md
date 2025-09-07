@@ -105,11 +105,12 @@
    
 | <img src="./screenshot/1.0/1.png"/> | <img src="./screenshot/1.0/2.jpg"/> |<img src="./screenshot/1.0/3.png"/> | 
 | ------------------------------------| ----------------------------------- | ---------------------------------- |
-| <img src="./screenshot/alert1.png"/> | <img src="./screenshot/alert2.png"/> |<img src="./screenshot/1.0/14.png"/>| 
+| <img src="./screenshot/alert1.png"/> |<img src="https://github.com/user-attachments/assets/0c7d1891-3df1-4413-a7c2-1b2288c35a25" /> |<img src="./screenshot/1.0/14.png"/>| 
+
 
 </div>
 
-  - 🎭K8S负载实时监控管理页面：及时查看微服务状态，**账号级别授权**的微服务版本更新能力，实时Pod日志查询。
+  - 🎭K8S负载实时监控管理页面：实时查看微服务状态与Pod日志跟踪，微服务版本更新支持**账号级别授权操作**以及**自动从镜像仓库获取标签**。
   - ⏱️支持**即时、定时、周期性**执行微服务的**扩缩容和重启**操作。
 
 ---
