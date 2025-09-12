@@ -1,4 +1,6 @@
 <div align="center">
+ 
+简体中文 | [English](README.md)
 
 [![StarsL.cn](https://img.shields.io/badge/website-StarsL.cn-orange)](https://starsl.cn)
 [![Commits](https://img.shields.io/github/commit-activity/m/CassInfra/KubeDoor?color=ffff00)](https://github.com/CassInfra/KubeDoor/commits/main)
