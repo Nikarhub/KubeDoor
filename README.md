@@ -314,4 +314,4 @@ Thanks to the following excellent projects, without which **KubeDoor** would not
 - [TRAE](www.trae.ai) [Python](https://www.python.org/) [AIOHTTP](https://github.com/aio-libs/aiohttp) [VUE](https://cn.vuejs.org/) [Pure Admin](https://pure-admin.cn/) [Element Plus](https://element-plus.org) [Kubernetes](https://kubernetes.io/) [VictoriaMetrics](https://victoriametrics.com/) [ClickHouse](https://clickhouse.com/) [Grafana](https://grafana.com/) [Nginx](https://nginx.org/) ...
 
 **Special Thanks**
-- [**CassTime**](https://www.casstime.com): The birth of **KubeDoor** is inseparable from the support of 🦄**Kaisi**.
+- [**CassTime**](https://www.casstime.com): The birth of **KubeDoor** is inseparable from the support of 🦄**CassTime**.
